@@ -7,8 +7,8 @@ const ChartTab: React.FC = () => {
 
   const getButtonClass = (option: "optionOne" | "optionTwo" | "optionThree") =>
     selected === option
-      ? "shadow-theme-xs text-gray-900 dark:text-white bg-white dark:bg-gray-800"
-      : "text-gray-500 dark:text-gray-400";
+      ? "shadow-xs text-amber-700 font-semibold bg-white border border-amber-200/80 dark:bg-gray-800 dark:text-amber-400 dark:border-amber-500/20"
+      : "text-gray-500 hover:text-gray-800 dark:text-gray-400";
 
   return (
     <div className="flex items-center gap-0.5 rounded-lg bg-gray-100 p-0.5 dark:bg-gray-900">
@@ -18,7 +18,7 @@ const ChartTab: React.FC = () => {
           "optionOne"
         )}`}
       >
-        Monthly
+        Theo tháng
       </button>
 
       <button
@@ -27,7 +27,7 @@ const ChartTab: React.FC = () => {
           "optionTwo"
         )}`}
       >
-        Quarterly
+        Theo quý
       </button>
 
       <button
@@ -36,7 +36,7 @@ const ChartTab: React.FC = () => {
           "optionThree"
         )}`}
       >
-        Annually
+        Theo năm
       </button>
     </div>
   );
