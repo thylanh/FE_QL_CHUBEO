@@ -1,18 +1,20 @@
 "use client";
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useCallback } from "react";
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import interactionPlugin from "@fullcalendar/interaction";
+import viLocale from "@fullcalendar/core/locales/vi";
+
+import { useModal } from "@/hooks/useModal";
+import { Modal } from "@/components/ui/modal";
+import { apiClient } from "@/lib/apiConfig";
 import {
   EventInput,
   DateSelectArg,
   EventClickArg,
   EventContentArg,
 } from "@fullcalendar/core";
-import { useModal } from "@/hooks/useModal";
-import { Modal } from "@/components/ui/modal";
-
 interface CalendarEvent extends EventInput {
   extendedProps: {
     calendar: string;
@@ -20,53 +22,68 @@ interface CalendarEvent extends EventInput {
 }
 
 const Calendar: React.FC = () => {
-  const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(
-    null
-  );
+  const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
   const [eventTitle, setEventTitle] = useState("");
   const [eventStartDate, setEventStartDate] = useState("");
   const [eventEndDate, setEventEndDate] = useState("");
-  const [eventLevel, setEventLevel] = useState("");
-  const calendarSeedDate = new Date("2026-09-09T00:00:00Z");
-  const formatDate = (date: Date) => date.toISOString().split("T")[0];
-  const addDays = (date: Date, days: number) => {
-    const nextDate = new Date(date);
-    nextDate.setUTCDate(nextDate.getUTCDate() + days);
-    return nextDate;
-  };
-
-  const initialEvents: CalendarEvent[] = [
-    {
-      id: "1",
-      title: "Event Conf.",
-      start: formatDate(calendarSeedDate),
-      extendedProps: { calendar: "Danger" },
-    },
-    {
-      id: "2",
-      title: "Meeting",
-      start: formatDate(addDays(calendarSeedDate, 1)),
-      extendedProps: { calendar: "Success" },
-    },
-    {
-      id: "3",
-      title: "Workshop",
-      start: formatDate(addDays(calendarSeedDate, 2)),
-      end: formatDate(addDays(calendarSeedDate, 3)),
-      extendedProps: { calendar: "Primary" },
-    },
-  ];
-  const [events, setEvents] = useState<CalendarEvent[]>(initialEvents);
+  const [eventLevel, setEventLevel] = useState("Primary");
+  const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isLoadingEvents, setIsLoadingEvents] = useState(true);
   const calendarRef = useRef<FullCalendar>(null);
-  const nextEventId = useRef(initialEvents.length + 1);
   const { isOpen, openModal, closeModal } = useModal();
 
   const calendarsEvents = {
-    Danger: "Quan trọng",
-    Success: "Trung bình",
-    Primary: "Thường",
-    Warning: "Khác",
+    Danger: "Lịch hẹn",
+    Success: "Công việc",
+    Primary: "Công tác",
+    Warning: "Xin nghỉ",
   };
+
+  const showToast = useCallback((message: string) => {
+    setToastMessage(message);
+    window.setTimeout(() => setToastMessage(null), 3200);
+  }, []);
+
+  const fetchEvents = useCallback(async (from?: string, to?: string) => {
+    try {
+      setIsLoadingEvents(true);
+      const now = new Date();
+      const start = from || new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split("T")[0];
+      const end = to || new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split("T")[0];
+      const response = await apiClient.calendar.getCalendar(start, end);
+
+      if (!response.success || !response.data) {
+        throw new Error(response.error || "Không thể tải lịch làm.");
+      }
+
+      const mappedEvents = response.data.map((item) => ({
+        id: String(item.id),
+        title: item.title,
+        start: item.start,
+        end: item.end || undefined,
+        allDay: item.allDay ?? true,
+        extendedProps: {
+          calendar: item.extendedProps?.calendar || item.calendar || "Primary",
+        },
+      }));
+
+      setEvents(mappedEvents);
+    } catch {
+      setEvents([]);
+      showToast("Không thể tải dữ liệu lịch làm.");
+    } finally {
+      setIsLoadingEvents(false);
+    }
+  }, [showToast]);
+
+  React.useEffect(() => {
+    const now = new Date();
+    const from = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split("T")[0];
+    const to = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split("T")[0];
+    void fetchEvents(from, to);
+  }, [fetchEvents]);
 
   const handleDateSelect = (selectInfo: DateSelectArg) => {
     resetModalFields();
@@ -81,56 +98,107 @@ const Calendar: React.FC = () => {
     setEventTitle(event.title);
     setEventStartDate(event.start?.toISOString().split("T")[0] || "");
     setEventEndDate(event.end?.toISOString().split("T")[0] || "");
-    setEventLevel(event.extendedProps.calendar);
+    setEventLevel(event.extendedProps.calendar || "Primary");
     openModal();
   };
 
-  const handleAddOrUpdateEvent = () => {
-    if (selectedEvent) {
-      // Update existing event
-      setEvents((prevEvents) =>
-        prevEvents.map((event) =>
-          event.id === selectedEvent.id
-            ? {
-              ...event,
-              title: eventTitle,
-              start: eventStartDate,
-              end: eventEndDate,
-              extendedProps: { calendar: eventLevel },
-            }
-            : event
-        )
-      );
-    } else {
-      // Add new event
-      const newEvent: CalendarEvent = {
-        id: `event-${nextEventId.current++}`,
-        title: eventTitle,
-        start: eventStartDate,
-        end: eventEndDate,
-        allDay: true,
-        extendedProps: { calendar: eventLevel },
-      };
-      setEvents((prevEvents) => [...prevEvents, newEvent]);
+  const handleAddOrUpdateEvent = async () => {
+    if (!eventTitle.trim() || !eventStartDate) {
+      showToast("Vui lòng nhập tên sự kiện và ngày bắt đầu.");
+      return;
     }
-    closeModal();
-    resetModalFields();
+
+    setIsSubmitting(true);
+
+    const payload = {
+      title: eventTitle.trim(),
+      start: eventStartDate,
+      end: eventEndDate || eventStartDate,
+      allDay: true,
+      calendar: eventLevel || "Primary",
+    };
+
+    try {
+      const response = selectedEvent
+        ? await apiClient.calendar.updateCalendarEvent(String(selectedEvent.id), payload)
+        : await apiClient.calendar.createCalendarEvent(payload);
+
+      if (!response.success) {
+        throw new Error(response.error || "Không thể lưu lịch làm.");
+      }
+
+      const actionText = selectedEvent ? "cập nhật" : "thêm";
+      showToast(`Đã ${actionText} lịch làm thành công.`);
+
+      const now = new Date();
+      const from = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split("T")[0];
+      const to = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split("T")[0];
+      await fetchEvents(from, to);
+      closeModal();
+      resetModalFields();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Không thể lưu lịch làm.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDeleteEvent = async () => {
+    if (!selectedEvent) return;
+
+    setIsSubmitting(true);
+
+    try {
+      const response = await apiClient.calendar.deleteCalendarEvent(String(selectedEvent.id));
+      if (!response.success) {
+        throw new Error(response.error || "Không thể xoá lịch làm.");
+      }
+
+      showToast(`Đã xóa lịch làm "${selectedEvent.title}".`);
+
+      const now = new Date();
+      const from = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split("T")[0];
+      const to = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split("T")[0];
+      await fetchEvents(from, to);
+      closeModal();
+      resetModalFields();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Không thể xoá lịch làm.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const resetModalFields = () => {
     setEventTitle("");
     setEventStartDate("");
     setEventEndDate("");
-    setEventLevel("");
+    setEventLevel("Primary");
     setSelectedEvent(null);
   };
 
   return (
     <div className="rounded-2xl border  border-gray-200 bg-white dark:border-gray-800 dark:bg-white/[0.03]">
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 z-[60] flex items-center gap-2 rounded-xl bg-gray-900 px-4 py-3 text-sm font-medium text-white shadow-xl transition-all animate-bounce dark:bg-amber-500 dark:text-gray-950">
+          <span>✨</span>
+          <span>{toastMessage}</span>
+        </div>
+      )}
+
       <div className="custom-calendar">
+        {isLoadingEvents && (
+          <div className="mb-3 flex items-center justify-center gap-2 rounded-lg border border-dashed border-brand-200 bg-brand-50 px-3 py-2 text-sm text-brand-600 dark:border-brand-500/50 dark:bg-brand-500/10 dark:text-brand-300">
+            <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-brand-500 border-t-transparent" />
+            Đang tải lịch làm...
+          </div>
+        )}
+
         <FullCalendar
           ref={calendarRef}
           plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
+          locale={viLocale}
+          firstDay={1}
           initialView="dayGridMonth"
           headerToolbar={{
             left: "prev,next addEventButton",
@@ -144,7 +212,7 @@ const Calendar: React.FC = () => {
           eventContent={renderEventContent}
           customButtons={{
             addEventButton: {
-              text: "Thêm sự kiện +",
+              text: "Lịch làm +",
               click: openModal,
             },
           }}
@@ -158,7 +226,7 @@ const Calendar: React.FC = () => {
         <div className="flex flex-col px-2 overflow-y-auto custom-scrollbar">
           <div>
             <h5 className="mb-2 font-semibold text-gray-800 modal-title text-theme-xl dark:text-white/90 lg:text-2xl">
-              {selectedEvent ? "Cập nhật sự kiện" : "Thêm sự kiện"}
+              {selectedEvent ? "Cập nhật lịch làm" : "Thêm lịch làm"}
             </h5>
             <p className="text-sm text-gray-500 dark:text-gray-400">
               Chú ý: Ca làm việc & sự kiện sẽ được hiển thị lên lịch
@@ -168,7 +236,7 @@ const Calendar: React.FC = () => {
             <div>
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-400">
-                  Tên sự kiện
+                  Lý do / Tên sự kiện
                 </label>
                 <input
                   id="event-title"
@@ -181,7 +249,7 @@ const Calendar: React.FC = () => {
             </div>
             <div className="mt-6">
               <label className="block mb-4 text-sm font-medium text-gray-700 dark:text-gray-400">
-                Mức độ sự kiện
+                Mục đích 
               </label>
               <div className="flex flex-wrap items-center gap-4 sm:gap-5">
                 {Object.entries(calendarsEvents).map(([key, value]) => (
@@ -249,19 +317,43 @@ const Calendar: React.FC = () => {
             </div>
           </div>
           <div className="flex items-center gap-3 mt-6 modal-footer sm:justify-end">
+            {selectedEvent ? (
+              <button
+                onClick={handleDeleteEvent}
+                type="button"
+                disabled={isSubmitting}
+                className="flex w-full items-center justify-center gap-2 rounded-lg border border-red-300 bg-red-50 px-4 py-2.5 text-sm font-medium text-red-600 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-red-700 dark:bg-red-500/10 dark:text-red-300 dark:hover:bg-red-500/20 sm:w-auto"
+              >
+                {isSubmitting && (
+                  <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-red-500 border-t-transparent" />
+                )}
+                {isSubmitting ? "Đang xóa..." : "Xóa"}
+              </button>
+            ) : null}
             <button
               onClick={closeModal}
               type="button"
-              className="flex w-full justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-white/[0.03] sm:w-auto"
+              disabled={isSubmitting}
+              className="flex w-full justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-white/[0.03] sm:w-auto"
             >
               Đóng
             </button>
             <button
               onClick={handleAddOrUpdateEvent}
               type="button"
-              className="btn btn-success btn-update-event flex w-full justify-center rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-600 sm:w-auto"
+              disabled={isSubmitting}
+              className="btn btn-success btn-update-event flex w-full items-center justify-center gap-2 rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-70 sm:w-auto"
             >
-              {selectedEvent ? "Cập nhật thay đổi" : "Thêm sự kiện"}
+              {isSubmitting && (
+                <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+              )}
+              {isSubmitting
+                ? selectedEvent
+                  ? "Đang cập nhật..."
+                  : "Đang thêm..."
+                : selectedEvent
+                  ? "Cập nhật thay đổi"
+                  : "Thêm sự kiện"}
             </button>
           </div>
         </div>
@@ -271,7 +363,8 @@ const Calendar: React.FC = () => {
 };
 
 const renderEventContent = (eventInfo: EventContentArg) => {
-  const colorClass = `fc-bg-${eventInfo.event.extendedProps.calendar.toLowerCase()}`;
+  const calendarName = eventInfo.event.extendedProps.calendar || "Primary";
+  const colorClass = `fc-bg-${String(calendarName).toLowerCase()}`;
   return (
     <div
       className={`event-fc-color flex fc-event-main ${colorClass} p-1 rounded-sm`}

@@ -4,7 +4,7 @@ import PageBreadcrumb from "@/components/common/PageBreadCrumb";
 export default function page() {
   return (
     <div>
-      <PageBreadcrumb pageTitle="Sự kiện & Ca làm việc" />
+      <PageBreadcrumb pageTitle="Lịch làm việc & Đăng ký ca" />
       <Calendar />
     </div>
   );

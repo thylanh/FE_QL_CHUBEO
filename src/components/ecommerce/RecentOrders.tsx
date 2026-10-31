@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import {
   Table,
   TableBody,
@@ -9,37 +8,23 @@ import {
   TableRow,
 } from "../ui/table";
 import Badge from "../ui/badge/Badge";
-import { apiClient } from "@/lib/apiConfig";
 import { Order } from "@/type/interface";
 
-export default function RecentOrders() {
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+type RecentOrdersProps = {
+  orders: Order[];
+  isLoading?: boolean;
+  error?: string | null;
+};
 
-  useEffect(() => {
-    let isMounted = true;
-
-    apiClient.orders.getOrders().then((response) => {
-      if (!isMounted) return;
-      if (response.success && response.data) {
-        setOrders(response.data.slice(0, 5));
-      } else {
-        setError(response.error || "Không thể tải danh sách đơn hàng.");
-      }
-      setIsLoading(false);
-    });
-
-    return () => {
-      isMounted = false;
-    };
-  }, []);
+export default function RecentOrders({ orders, isLoading = false, error = null }: RecentOrdersProps) {
+  const visibleOrders = orders.slice(0, 5);
 
   const statusLabels: Record<Order["status"], string> = {
     PENDING: "Chờ xử lý",
     PROCESSING: "Đang chế biến",
     COMPLETED: "Đã hoàn tất",
     CANCELLED: "Đã hủy",
+    CONFIRMED: "Đã xác nhận",
   };
 
   const statusColors: Record<Order["status"], "success" | "info" | "error" | "warning"> = {
@@ -47,6 +32,7 @@ export default function RecentOrders() {
     PROCESSING: "warning",
     COMPLETED: "success",
     CANCELLED: "error",
+    CONFIRMED: "success"
   };
 
   return (
@@ -56,7 +42,7 @@ export default function RecentOrders() {
           <h3 className="text-lg font-semibold text-gray-800 dark:text-white/90 flex items-center gap-2">
             <span>📋 Đơn Hàng Tại Quán</span>
             <span className="text-xs bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full dark:bg-amber-950/40 dark:text-amber-300 font-normal">
-              {orders.filter((order) => order.status === "PROCESSING").length} đơn đang chế biến
+              {visibleOrders.filter((order) => order.status === "PROCESSING").length} đơn đang chế biến
             </span>
           </h3>
         </div>
@@ -81,7 +67,7 @@ export default function RecentOrders() {
                 isHeader
                 className="py-3 font-medium text-gray-500 text-start text-theme-xs dark:text-gray-400"
               >
-                Người tạo đơn
+                Người tạo
               </TableCell>
               <TableCell
                 isHeader
@@ -112,15 +98,15 @@ export default function RecentOrders() {
             {!isLoading && error && (
               <TableRow><TableCell className="py-6 text-center text-red-500">{error}</TableCell></TableRow>
             )}
-            {!isLoading && !error && orders.length === 0 && (
+            {!isLoading && !error && visibleOrders.length === 0 && (
               <TableRow><TableCell className="py-6 text-center text-gray-500">Chưa có đơn hàng.</TableCell></TableRow>
             )}
-            {!isLoading && !error && orders.map((order) => (
+            {!isLoading && !error && visibleOrders.map((order) => (
               <TableRow key={order.id} className="hover:bg-gray-50/50 dark:hover:bg-white/[0.01]">
                 <TableCell className="py-3.5">
                   <div className="flex flex-col">
                     <span className="font-bold text-amber-600 dark:text-amber-400 text-theme-sm">
-                      #{order.id}
+                      #{order.code.toUpperCase()}
                     </span>
                     <span className="text-gray-800 font-medium text-theme-xs dark:text-white/90">
                       {order.table || order.orderType}

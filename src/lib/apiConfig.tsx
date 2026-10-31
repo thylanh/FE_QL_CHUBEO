@@ -1,4 +1,7 @@
-import { Role, User, MenuItem, MenuIngredient, InventoryItem, CreateInventoryItemInput, CreateOrderInput, Order } from "@/type/interface";
+import { Role, User, MenuItem, InventoryItem, CreateInventoryItemInput, CreateOrderInput, Order, CalendarEvent } from "@/type/interface";
+
+export type OrderPeriod = "today" | "week" | "month";
+
 export const API_ENDPOINTS = {
     AUTH: {
         LOGIN: "/api/auth/login",
@@ -26,6 +29,11 @@ export const API_ENDPOINTS = {
         STOCK_IN: (id: string) => `/api/inventory/${id}/stock-in`,
         STOCK_OUT: (id: string) => `/api/inventory/${id}/stock-out`,
     },
+    CALENDAR: {
+        LIST: "/api/calendar",
+        CREATE: "/api/calendar",
+        ITEM_BY_ID: (id: string) => `/api/calendar/${id}`,
+    },
     REPORTS: {
         REVENUE: (from?: string, to?: string) => {
             const params = new URLSearchParams();
@@ -36,13 +44,11 @@ export const API_ENDPOINTS = {
         },
     },
 } as const;
-
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000").replace(/\/$/, "");
 
 // ==========================================
 // Phân Quyền Nghiệp Vụ (RBAC)
 // ==========================================
-
 export type ActionPermission =
     | "MANAGE_USERS"          // ADMIN
     | "VIEW_ORDERS"           // ADMIN, MANAGER, STAFF
@@ -51,7 +57,6 @@ export type ActionPermission =
     | "VIEW_INVENTORY"        // ADMIN, MANAGER, STAFF
     | "ADJUST_INVENTORY"      // ADMIN, MANAGER
     | "VIEW_REPORTS";         // ADMIN, MANAGER
-
 export const ROLE_PERMISSIONS: Record<ActionPermission, Role[]> = {
     MANAGE_USERS: ["ADMIN"],
     VIEW_ORDERS: ["ADMIN", "MANAGER", "STAFF"],
@@ -61,7 +66,6 @@ export const ROLE_PERMISSIONS: Record<ActionPermission, Role[]> = {
     ADJUST_INVENTORY: ["ADMIN", "MANAGER"],
     VIEW_REPORTS: ["ADMIN", "MANAGER"],
 };
-
 export function hasPermission(role: Role | undefined | null, action: ActionPermission): boolean {
     if (!role) return false;
     return ROLE_PERMISSIONS[action]?.includes(role) ?? false;
@@ -70,10 +74,8 @@ export function hasPermission(role: Role | undefined | null, action: ActionPermi
 // ==========================================
 // Client Storage Helper (Token & User)
 // ==========================================
-
 const TOKEN_KEY = "bunchubeo_token";
 const USER_KEY = "bunchubeo_user";
-
 export const authStorage = {
     getToken(): string | null {
         if (typeof window === "undefined") return null;
@@ -128,45 +130,76 @@ export const authStorage = {
 // ==========================================
 // Typed API Client
 // ==========================================
-async function fetchWithAuth<T>(url: string, options: RequestInit = {}): Promise<{ success: boolean; data?: T; error?: string; details?: null }> {
-    const token = authStorage.getToken();
-    const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-        ...(options.headers as Record<string, string>),
-    };
-    if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
-    }
-    try {
-        const requestUrl = url.startsWith("http") ? url : `${API_BASE_URL}${url}`;
-        const response = await fetch(requestUrl, {
-            ...options,
-            headers,
-            credentials: "include",
-        });
-        const json = await response.json();
-        if (!response.ok) {
-            return {
-                success: false,
-                error: json.error || `HTTP error ${response.status}`,
-                details: json.details,
-            };
-        }
-        if (json && typeof json === "object" && "success" in json && "data" in json) {
-            return json as { success: boolean; data?: T; error?: string; details?: null };
-        }
-        return {
-            success: true,
-            data: json as T,
-        };
-    } catch {
-        return {
-            success: false,
-            error: "Lỗi kết nối máy chủ.",
-        };
-    }
+const pendingRequests = new Map<string, Promise<{ success: boolean; data?: unknown; error?: string; details?: null }>>();
+
+function getRequestCacheKey(url: string, options: RequestInit): string {
+    const method = (options.method || "GET").toUpperCase();
+    const body = method === "GET" || method === "HEAD" ? "" : (options.body ?? "");
+    return `${method}:${url}:${body}`;
 }
 
+async function fetchWithAuth<T>(url: string, options: RequestInit = {}): Promise<{ success: boolean; data?: T; error?: string; details?: null }> {
+    const method = (options.method || "GET").toUpperCase();
+    const cacheKey = getRequestCacheKey(url, options);
+
+    if (method === "GET") {
+        const existingRequest = pendingRequests.get(cacheKey);
+        if (existingRequest) {
+            return existingRequest as Promise<{ success: boolean; data?: T; error?: string; details?: null }>;
+        }
+    }
+
+    const requestPromise = (async () => {
+        const token = authStorage.getToken();
+        const headers: Record<string, string> = {
+            "Content-Type": "application/json",
+            ...(options.headers as Record<string, string>),
+        };
+        if (token) {
+            headers["Authorization"] = `Bearer ${token}`;
+        }
+        try {
+            const requestUrl = url.startsWith("http") ? url : `${API_BASE_URL}${url}`;
+            const response = await fetch(requestUrl, {
+                ...options,
+                headers,
+                credentials: "include",
+            });
+            const json = await response.json();
+            if (!response.ok) {
+                return {
+                    success: false,
+                    error: json.error || `HTTP error ${response.status}`,
+                    details: json.details,
+                } as { success: boolean; data?: T; error?: string; details?: null };
+            }
+            if (json && typeof json === "object" && "success" in json && "data" in json) {
+                return json as { success: boolean; data?: T; error?: string; details?: null };
+            }
+            return {
+                success: true,
+                data: json as T,
+            } as { success: boolean; data?: T; error?: string; details?: null };
+        } catch {
+            return {
+                success: false,
+                error: "L?i k?t n?i m?y ch?.",
+            } as { success: boolean; data?: T; error?: string; details?: null };
+        }
+    })();
+
+    if (method === "GET") {
+        pendingRequests.set(cacheKey, requestPromise);
+    }
+
+    try {
+        return await requestPromise;
+    } finally {
+        if (method === "GET") {
+            pendingRequests.delete(cacheKey);
+        }
+    }
+}
 export const apiClient = {
     auth: {
         async login(username: string, password: string, remember: boolean = true): Promise<{
@@ -305,13 +338,37 @@ export const apiClient = {
             });
         },
     },
+    calendar: {
+        async getCalendar(from?: string, to?: string) {
+            const params = new URLSearchParams();
+            if (from) params.append("from", from);
+            if (to) params.append("to", to);
+            const query = params.toString();
+            return fetchWithAuth<CalendarEvent[]>(`${API_ENDPOINTS.CALENDAR.LIST}${query ? `?${query}` : ""}`);
+        },
+        async createCalendarEvent(data: Partial<CalendarEvent> & { title: string; start: string; calendar?: string }) {
+            return fetchWithAuth<CalendarEvent>(API_ENDPOINTS.CALENDAR.CREATE, {
+                method: "POST",
+                body: JSON.stringify(data),
+            });
+        },
+        async updateCalendarEvent(id: string, data: Partial<CalendarEvent> & { title?: string; start?: string; calendar?: string }) {
+            return fetchWithAuth<CalendarEvent>(API_ENDPOINTS.CALENDAR.ITEM_BY_ID(id), {
+                method: "PATCH",
+                body: JSON.stringify(data),
+            });
+        },
+        async deleteCalendarEvent(id: string) {
+            return fetchWithAuth<CalendarEvent>(API_ENDPOINTS.CALENDAR.ITEM_BY_ID(id), {
+                method: "DELETE",
+            });
+        },
+    },
     orders: {
-        async getOrders(params?: { from?: string; to?: string }) {
+        async getOrders(period: OrderPeriod = "today") {
             const search = new URLSearchParams();
-            if (params?.from) search.append("from", params.from);
-            if (params?.to) search.append("to", params.to);
-            const query = search.toString();
-            return fetchWithAuth<Order[]>(`${API_ENDPOINTS.ORDERS.LIST}${query ? `?${query}` : ""}`);
+            search.append("period", period);
+            return fetchWithAuth<Order[]>(`${API_ENDPOINTS.ORDERS.LIST}?${search.toString()}`);
         },
         async createOrder(data: CreateOrderInput) {
             return fetchWithAuth<Order>(API_ENDPOINTS.ORDERS.CREATE, {

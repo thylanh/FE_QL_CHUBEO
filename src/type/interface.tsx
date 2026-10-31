@@ -92,3 +92,15 @@ export interface CreateOrderInput {
   note?: string;
   serviceFee: number;
 }
+
+export interface CalendarEvent {
+  id: string;
+  title: string;
+  start: string;
+  end?: string | null;
+  allDay?: boolean;
+  calendar?: string;
+  extendedProps?: {
+    calendar?: string;
+  };
+}

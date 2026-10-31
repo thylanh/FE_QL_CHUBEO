@@ -36,7 +36,7 @@ const navItems: NavItem[] = [
   },
   {
     icon: <CalenderIcon />,
-    name: "Sự kiện & Ca làm việc",
+    name: "Lịch làm việc & Đăng ký ca",
     path: "/calendar",
   },
   // {
@@ -47,7 +47,10 @@ const navItems: NavItem[] = [
   {
     name: "Bán hàng & POS",
     icon: <ListIcon />,
-    subItems: [{ name: "Tạo đơn hàng", path: "/form-elements", pro: false }],
+    subItems: [
+      { name: "Tạo đơn hàng", path: "/form-elements", pro: false },
+      { name: "Quản lý đơn hàng", path: "/orders", pro: false },
+    ],
   },
   {
     name: "Thực đơn & Giá",
