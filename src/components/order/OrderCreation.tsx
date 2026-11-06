@@ -172,7 +172,11 @@ function OrderCreation() {
               (inventoryItem) => inventoryItem.id === ingredient.ingredient_id
             );
             return stockItem && stockItem.quantity > 0
-              ? [{ ingredientId: ingredient.ingredient_id, amount: ingredient.amount * item.quantity }]
+              ? [{
+                  ingredientId: ingredient.ingredient_id,
+                  name: stockItem.name,
+                  amount: ingredient.amount * item.quantity,
+                }]
               : [];
           }),
         })),
@@ -368,7 +372,7 @@ function OrderCreation() {
                             (inventoryItem) => inventoryItem.id === ingredient.ingredient_id
                           );
                           const unit = stockItem?.unit || "";
-                          const amountStep = item.quantity % 2 === 0 ? 0.5 : 1;
+                          const amountStep = 1;
                           const updateAmount = (delta: number) => {
                             const nextValue = Number(Math.max(0, ingredient.amount + delta).toFixed(3));
                             changeIngredientAmount(item.id, ingredient.ingredient_id, nextValue);

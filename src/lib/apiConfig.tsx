@@ -44,7 +44,9 @@ export const API_ENDPOINTS = {
         },
     },
 } as const;
-const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000").replace(/\/$/, "");
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "https://be-ql-chubeo.onrender.com").replace(/\/$/, "");
+const API_TIMEOUT_MS = Number(process.env.NEXT_PUBLIC_API_TIMEOUT_MS || 15000);
+const API_CACHE_TTL_MS = Number(process.env.NEXT_PUBLIC_API_CACHE_TTL_MS || 60000);
 
 // ==========================================
 // Phân Quyền Nghiệp Vụ (RBAC)
@@ -131,6 +133,7 @@ export const authStorage = {
 // Typed API Client
 // ==========================================
 const pendingRequests = new Map<string, Promise<{ success: boolean; data?: unknown; error?: string; details?: null }>>();
+const responseCache = new Map<string, { data: unknown; expiresAt: number }>();
 
 function getRequestCacheKey(url: string, options: RequestInit): string {
     const method = (options.method || "GET").toUpperCase();
@@ -138,11 +141,47 @@ function getRequestCacheKey(url: string, options: RequestInit): string {
     return `${method}:${url}:${body}`;
 }
 
+function getCachedResponse<T>(cacheKey: string): T | undefined {
+    const cached = responseCache.get(cacheKey);
+    if (!cached) return undefined;
+
+    if (Date.now() > cached.expiresAt) {
+        responseCache.delete(cacheKey);
+        return undefined;
+    }
+
+    return cached.data as T;
+}
+
+function setCachedResponse<T>(cacheKey: string, data: T): void {
+    responseCache.set(cacheKey, {
+        data,
+        expiresAt: Date.now() + API_CACHE_TTL_MS,
+    });
+}
+
+function invalidateCacheByPrefix(prefix: string): void {
+    const normalizedPrefix = prefix.replace(/\/$/, "");
+    for (const cacheKey of Array.from(responseCache.keys())) {
+        if (cacheKey.includes(`GET:${normalizedPrefix}`) || cacheKey.includes(`GET:${API_BASE_URL}${normalizedPrefix}`) || cacheKey.includes(`${normalizedPrefix}?`)) {
+            responseCache.delete(cacheKey);
+        }
+    }
+}
+
 async function fetchWithAuth<T>(url: string, options: RequestInit = {}): Promise<{ success: boolean; data?: T; error?: string; details?: null }> {
     const method = (options.method || "GET").toUpperCase();
     const cacheKey = getRequestCacheKey(url, options);
 
     if (method === "GET") {
+        const cachedData = getCachedResponse<T>(cacheKey);
+        if (cachedData !== undefined) {
+            return {
+                success: true,
+                data: cachedData,
+            } as { success: boolean; data?: T; error?: string; details?: null };
+        }
+
         const existingRequest = pendingRequests.get(cacheKey);
         if (existingRequest) {
             return existingRequest as Promise<{ success: boolean; data?: T; error?: string; details?: null }>;
@@ -160,11 +199,20 @@ async function fetchWithAuth<T>(url: string, options: RequestInit = {}): Promise
         }
         try {
             const requestUrl = url.startsWith("http") ? url : `${API_BASE_URL}${url}`;
+            const controller = new AbortController();
+            const timeoutId = typeof window !== "undefined" ? window.setTimeout(() => controller.abort(), API_TIMEOUT_MS) : undefined;
+
             const response = await fetch(requestUrl, {
                 ...options,
                 headers,
                 credentials: "include",
+                signal: controller.signal,
             });
+
+            if (typeof window !== "undefined" && timeoutId) {
+                window.clearTimeout(timeoutId);
+            }
+
             const json = await response.json();
             if (!response.ok) {
                 return {
@@ -173,17 +221,30 @@ async function fetchWithAuth<T>(url: string, options: RequestInit = {}): Promise
                     details: json.details,
                 } as { success: boolean; data?: T; error?: string; details?: null };
             }
-            if (json && typeof json === "object" && "success" in json && "data" in json) {
-                return json as { success: boolean; data?: T; error?: string; details?: null };
+
+            const normalizedResponse = (json && typeof json === "object" && "success" in json && "data" in json)
+                ? json as { success: boolean; data?: T; error?: string; details?: null }
+                : {
+                    success: true,
+                    data: json as T,
+                } as { success: boolean; data?: T; error?: string; details?: null };
+
+            if (method === "GET" && normalizedResponse.success && normalizedResponse.data !== undefined) {
+                setCachedResponse(cacheKey, normalizedResponse.data);
             }
-            return {
-                success: true,
-                data: json as T,
-            } as { success: boolean; data?: T; error?: string; details?: null };
-        } catch {
+
+            return normalizedResponse;
+        } catch (error) {
+            if (error instanceof DOMException && error.name === "AbortError") {
+                return {
+                    success: false,
+                    error: `Yêu cầu API quá chậm, vui lòng thử lại sau (${Math.round(API_TIMEOUT_MS / 1000)}s).`,
+                } as { success: boolean; data?: T; error?: string; details?: null };
+            }
+
             return {
                 success: false,
-                error: "L?i k?t n?i m?y ch?.",
+                error: "lỗi kết nối máy chủ.",
             } as { success: boolean; data?: T; error?: string; details?: null };
         }
     })();
@@ -299,16 +360,16 @@ export const apiClient = {
                 method: "DELETE",
             });
         },
-        async stockIn(id: string, quantity: number) {
+        async stockIn(id: string, quantity: number, purchaseUnit?: string, conversionRate?: number) {
             return fetchWithAuth<InventoryItem>(API_ENDPOINTS.INVENTORY.STOCK_IN(id), {
                 method: "POST",
-                body: JSON.stringify({ quantity }),
+                body: JSON.stringify({ quantity, purchaseUnit, conversionRate }),
             });
         },
-        async stockOut(id: string, quantity: number) {
+        async stockOut(id: string, quantity: number, purchaseUnit?: string, conversionRate?: number) {
             return fetchWithAuth<InventoryItem>(API_ENDPOINTS.INVENTORY.STOCK_OUT(id), {
                 method: "POST",
-                body: JSON.stringify({ quantity }),
+                body: JSON.stringify({ quantity, purchaseUnit, conversionRate }),
             });
         },
     },
@@ -347,21 +408,33 @@ export const apiClient = {
             return fetchWithAuth<CalendarEvent[]>(`${API_ENDPOINTS.CALENDAR.LIST}${query ? `?${query}` : ""}`);
         },
         async createCalendarEvent(data: Partial<CalendarEvent> & { title: string; start: string; calendar?: string }) {
-            return fetchWithAuth<CalendarEvent>(API_ENDPOINTS.CALENDAR.CREATE, {
+            const response = await fetchWithAuth<CalendarEvent>(API_ENDPOINTS.CALENDAR.CREATE, {
                 method: "POST",
                 body: JSON.stringify(data),
             });
+            if (response.success) {
+                invalidateCacheByPrefix(API_ENDPOINTS.CALENDAR.LIST);
+            }
+            return response;
         },
         async updateCalendarEvent(id: string, data: Partial<CalendarEvent> & { title?: string; start?: string; calendar?: string }) {
-            return fetchWithAuth<CalendarEvent>(API_ENDPOINTS.CALENDAR.ITEM_BY_ID(id), {
+            const response = await fetchWithAuth<CalendarEvent>(API_ENDPOINTS.CALENDAR.ITEM_BY_ID(id), {
                 method: "PATCH",
                 body: JSON.stringify(data),
             });
+            if (response.success) {
+                invalidateCacheByPrefix(API_ENDPOINTS.CALENDAR.LIST);
+            }
+            return response;
         },
         async deleteCalendarEvent(id: string) {
-            return fetchWithAuth<CalendarEvent>(API_ENDPOINTS.CALENDAR.ITEM_BY_ID(id), {
+            const response = await fetchWithAuth<CalendarEvent>(API_ENDPOINTS.CALENDAR.ITEM_BY_ID(id), {
                 method: "DELETE",
             });
+            if (response.success) {
+                invalidateCacheByPrefix(API_ENDPOINTS.CALENDAR.LIST);
+            }
+            return response;
         },
     },
     orders: {

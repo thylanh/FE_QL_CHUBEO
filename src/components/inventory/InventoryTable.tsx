@@ -29,7 +29,7 @@ export default function InventoryTable() {
   const [amount, setAmount] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [newItem, setNewItem] = useState({ name: "", unit: "", quantity: "", minQuantity: "", costPrice: "" });
+  const [newItem, setNewItem] = useState({ name: "", unit: "", purchaseUnit: "", conversionRate: "", quantity: "", minQuantity: "", costPrice: "" });
   const [createError, setCreateError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [deletingItemId, setDeletingItemId] = useState<string | null>(null);
@@ -89,13 +89,28 @@ export default function InventoryTable() {
   const totalPages = Math.max(1, Math.ceil(filteredInventory.length / itemsPerPage));
   const visibleInventory = filteredInventory.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
+  // const getConvertedStockQuantity = (item: InventoryItem, amount: number) => {
+  //   if (!item.purchaseUnit || !item.conversionRate || item.conversionRate <= 0) {
+  //     return amount;
+  //   }
+  //   console.log(`Converting ${amount} ${item.purchaseUnit} to ${item.unit} using conversion rate ${item.conversionRate}`);
+  //   return Number((amount * item.conversionRate).toFixed(3));
+  // };
+
   const handleCreateInventoryItem = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const quantity = Number(newItem.quantity);
     const minQuantity = Number(newItem.minQuantity);
     const costPrice = Number(newItem.costPrice);
+    const conversionRate = Number(newItem.conversionRate);
+    const purchaseUnit = newItem.purchaseUnit.trim();
+
     if (!newItem.name.trim() || !newItem.unit.trim()) {
       setCreateError("Vui lòng nhập tên nguyên liệu và đơn vị.");
+      return;
+    }
+    if (purchaseUnit && (!Number.isFinite(conversionRate) || conversionRate <= 0)) {
+      setCreateError("Tỷ lệ quy đổi phải là số dương khi có đơn vị mua.");
       return;
     }
     if (![quantity, minQuantity, costPrice].every(Number.isFinite) || quantity < 0 || minQuantity < 0 || costPrice < 0) {
@@ -103,9 +118,14 @@ export default function InventoryTable() {
       return;
     }
 
+    const normalizedPurchaseUnit = purchaseUnit || newItem.unit.trim();
+    const normalizedConversionRate = purchaseUnit ? conversionRate : 1;
+
     const data: CreateInventoryItemInput = {
       name: newItem.name.trim(),
       unit: newItem.unit.trim(),
+      purchaseUnit: normalizedPurchaseUnit,
+      conversionRate: normalizedConversionRate,
       quantity,
       minQuantity,
       costPrice,
@@ -122,7 +142,7 @@ export default function InventoryTable() {
     const createdItem = response.data;
     setInventory((items) => [createdItem, ...items]);
     setCurrentPage(1);
-    setNewItem({ name: "", unit: "", quantity: "", minQuantity: "", costPrice: "" });
+    setNewItem({ name: "", unit: "", purchaseUnit: "", conversionRate: "", quantity: "", minQuantity: "", costPrice: "" });
     setIsCreateOpen(false);
     setToastMessage(`Đã thêm nguyên liệu "${createdItem.name}".`);
     window.setTimeout(() => setToastMessage(null), 3000);
@@ -170,7 +190,10 @@ export default function InventoryTable() {
       setFormError("Số lượng nhập hoặc xuất phải lớn hơn 0.");
       return;
     }
-    if (action === "OUT" && parsedAmount > editingItem.quantity) {
+
+    const adjustedAmount = action === "ADJUST" ? parsedAmount : amount ? parsedAmount : 0;
+
+    if (action === "OUT" && adjustedAmount > editingItem.quantity) {
       setFormError("Số lượng xuất không được lớn hơn tồn kho hiện tại.");
       return;
     }
@@ -178,9 +201,9 @@ export default function InventoryTable() {
     setIsSubmitting(true);
     setFormError(null);
     const response = action === "IN"
-      ? await apiClient.inventory.stockIn(editingItem.id, parsedAmount)
+      ? await apiClient.inventory.stockIn(editingItem.id, adjustedAmount, editingItem.purchaseUnit, editingItem.conversionRate)
       : action === "OUT"
-        ? await apiClient.inventory.stockOut(editingItem.id, parsedAmount)
+        ? await apiClient.inventory.stockOut(editingItem.id, adjustedAmount, editingItem.purchaseUnit, editingItem.conversionRate)
         : null;
     setIsSubmitting(false);
 
@@ -374,6 +397,19 @@ export default function InventoryTable() {
               </select>
             </label>
             <label className="space-y-1 text-sm font-medium text-gray-700 dark:text-gray-300">
+              Đơn vị mua (nếu có)
+              <select value={newItem.purchaseUnit} onChange={(event) => setNewItem((item) => ({ ...item, purchaseUnit: event.target.value, conversionRate: event.target.value ? item.conversionRate : "" }))} className="h-11 w-full rounded-lg border border-gray-300 bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-white">
+                <option value="">Không dùng</option>
+                {["kg", "g", "lít", "ml", "cái", "bó", "chai", "gói", "hộp", "thùng"].map((unit) => (
+                  <option key={unit} value={unit}>{unit}</option>
+                ))}
+              </select>
+            </label>
+            <label className="space-y-1 text-sm font-medium text-gray-700 dark:text-gray-300">
+              Tỷ lệ quy đổi (1 mua = X kho)
+              <input type="number" min="0.001" step="0.001" value={newItem.conversionRate} disabled={!newItem.purchaseUnit} onChange={(event) => setNewItem((item) => ({ ...item, conversionRate: event.target.value }))} className="h-11 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:bg-gray-900" />
+            </label>
+            <label className="space-y-1 text-sm font-medium text-gray-700 dark:text-gray-300">
               Số lượng ban đầu
               <input required type="number" min="0" step="0.001" value={newItem.quantity} onChange={(event) => setNewItem((item) => ({ ...item, quantity: event.target.value }))} className="h-11 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700 dark:bg-gray-900" />
             </label>
@@ -400,13 +436,15 @@ export default function InventoryTable() {
             <h2 className="text-lg font-semibold text-gray-900 dark:text-white/90">
               {action === "IN" ? "Nhập kho" : action === "OUT" ? "Xuất kho" : null}
             </h2>
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{editingItem?.name} · Hiện có {editingItem?.quantity} {editingItem?.unit}</p>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              {editingItem?.name} · Hiện có {editingItem?.quantity} {editingItem?.unit}
+              {editingItem?.purchaseUnit && editingItem.conversionRate ? ` · 1 ${editingItem.purchaseUnit} = ${editingItem.conversionRate} ${editingItem.unit}` : ""}
+            </p>
           </div>
           <label className="block space-y-2 text-sm font-medium text-gray-700 dark:text-gray-300">
             <input
               type="number"
-              min={action === "ADJUST" ? undefined : "0.001"}
-              step={action === "ADJUST" ? "1" : "0.001"}
+              min={action === "ADJUST" ? undefined : "1"}
               value={amount}
               onChange={(event) => setAmount(event.target.value)}
               required

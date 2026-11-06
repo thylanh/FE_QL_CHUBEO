@@ -464,6 +464,13 @@ function OrderRows({
 }) {
   const nextStatus = nextStatusByCurrent[order.status];
 
+  const formatIngredientTag = (ingredient: Order['lines'][number]['ingredients'][number]) => {
+    const ingredientAmount = Number(ingredient.amount || 0);
+    const amountLabel = Number.isFinite(ingredientAmount) && ingredientAmount > 0 ? ingredientAmount.toString() : "1";
+    const ingredientName = ingredient.name || ingredient.ingredientId || "Nguyên liệu";
+    return `${amountLabel}x ${ingredientName}`;
+  };
+
   return (
     <>
       <tr className="group transition hover:bg-amber-50/30 dark:hover:bg-white/[0.025]">
@@ -519,13 +526,40 @@ function OrderRows({
             <div className="grid gap-4 sm:grid-cols-[1fr_1fr]">
               <div>
                 <p className="mb-2 text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">Chi tiết món</p>
-                <ul className="space-y-1.5">
-                  {order.lines.map((line) => (
-                    <li key={line.menuItemId} className="flex items-center justify-between gap-4 text-sm text-gray-700 dark:text-gray-200">
-                      <span> <span className="text-gray-400">× {line.quantity}</span> {line.name}</span>
-                      <span className="font-medium">{currency(line.total)}</span>
-                    </li>
-                  ))}
+                <ul className="space-y-2">
+                  {order.lines.map((line) => {
+                    const visibleIngredients = line.ingredients.slice(0, 4);
+                    const hiddenIngredientsCount = Math.max(0, line.ingredients.length - visibleIngredients.length);
+
+                    return (
+                      <li key={line.menuItemId} className="text-sm text-gray-700 dark:text-gray-200">
+                        <div className="flex items-center justify-between gap-4">
+                          <span>
+                            <span className="text-gray-400">× {line.quantity}</span> {line.name}
+                          </span>
+                          <span className="font-medium">{currency(line.total)}</span>
+                        </div>
+                        <div className="mt-1 flex flex-wrap gap-1.5">
+                          {line.ingredients.length > 0 ? (
+                            <>
+                              {visibleIngredients.map((ingredient) => (
+                                <span key={`${line.menuItemId}-${ingredient.ingredientId}-${ingredient.amount}`} className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+                                  {formatIngredientTag(ingredient)}
+                                </span>
+                              ))}
+                              {hiddenIngredientsCount > 0 && (
+                                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">
+                                  +{hiddenIngredientsCount} nguyên liệu khác
+                                </span>
+                              )}
+                            </>
+                          ) : (
+                            <span className="text-[11px] text-gray-400 dark:text-gray-500">Không có nguyên liệu</span>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
               <div>

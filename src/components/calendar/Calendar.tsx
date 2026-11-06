@@ -35,10 +35,10 @@ const Calendar: React.FC = () => {
   const { isOpen, openModal, closeModal } = useModal();
 
   const calendarsEvents = {
-    Danger: "Lịch hẹn",
-    Success: "Công việc",
-    Primary: "Công tác",
-    Warning: "Xin nghỉ",
+    danger: "Lịch hẹn",
+    success: "Công việc",
+    primary: "Công tác",
+    warning: "Xin nghỉ",
   };
 
   const showToast = useCallback((message: string) => {
@@ -53,11 +53,9 @@ const Calendar: React.FC = () => {
       const start = from || new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split("T")[0];
       const end = to || new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split("T")[0];
       const response = await apiClient.calendar.getCalendar(start, end);
-
       if (!response.success || !response.data) {
         throw new Error(response.error || "Không thể tải lịch làm.");
       }
-
       const mappedEvents = response.data.map((item) => ({
         id: String(item.id),
         title: item.title,
@@ -68,7 +66,6 @@ const Calendar: React.FC = () => {
           calendar: item.extendedProps?.calendar || item.calendar || "Primary",
         },
       }));
-
       setEvents(mappedEvents);
     } catch {
       setEvents([]);
@@ -115,7 +112,9 @@ const Calendar: React.FC = () => {
       start: eventStartDate,
       end: eventEndDate || eventStartDate,
       allDay: true,
-      calendar: eventLevel || "Primary",
+      extendedProps: {
+        calendar: eventLevel || "primary",
+      },
     };
 
     try {
@@ -129,13 +128,12 @@ const Calendar: React.FC = () => {
 
       const actionText = selectedEvent ? "cập nhật" : "thêm";
       showToast(`Đã ${actionText} lịch làm thành công.`);
-
+      closeModal();
+      resetModalFields();
       const now = new Date();
       const from = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split("T")[0];
       const to = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split("T")[0];
       await fetchEvents(from, to);
-      closeModal();
-      resetModalFields();
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Không thể lưu lịch làm.");
     } finally {
@@ -153,15 +151,13 @@ const Calendar: React.FC = () => {
       if (!response.success) {
         throw new Error(response.error || "Không thể xoá lịch làm.");
       }
-
       showToast(`Đã xóa lịch làm "${selectedEvent.title}".`);
-
+      closeModal();
+      resetModalFields();
       const now = new Date();
       const from = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split("T")[0];
       const to = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split("T")[0];
       await fetchEvents(from, to);
-      closeModal();
-      resetModalFields();
     } catch (error) {
       showToast(error instanceof Error ? error.message : "Không thể xoá lịch làm.");
     } finally {
@@ -362,13 +358,26 @@ const Calendar: React.FC = () => {
   );
 };
 
+const getCalendarColorClass = (calendar?: string) => {
+  const normalized = String(calendar || "Primary").toLowerCase();
+  switch (normalized) {
+    case "danger":
+      return "fc-bg-danger";
+    case "success":
+      return "fc-bg-success";
+    case "warning":
+      return "fc-bg-warning";
+    case "primary":
+    default:
+      return "fc-bg-primary";
+  }
+};
 const renderEventContent = (eventInfo: EventContentArg) => {
-  const calendarName = eventInfo.event.extendedProps.calendar || "Primary";
-  const colorClass = `fc-bg-${String(calendarName).toLowerCase()}`;
+  const colorClass = getCalendarColorClass(
+    eventInfo.event.extendedProps.calendar || "Primary"
+  );
   return (
-    <div
-      className={`event-fc-color flex fc-event-main ${colorClass} p-1 rounded-sm`}
-    >
+    <div className={`event-fc-color flex fc-event-main ${colorClass} p-1 rounded-sm`}>
       <div className="fc-daygrid-event-dot"></div>
       <div className="fc-event-time">{eventInfo.timeText}</div>
       <div className="fc-event-title">{eventInfo.event.title}</div>

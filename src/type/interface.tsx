@@ -33,6 +33,8 @@ export interface InventoryItem {
     id: string;
     name: string;
     unit: string;
+    purchaseUnit?: string;
+    conversionRate?: number;
     quantity: number;
     minQuantity: number;
     costPrice: number;
@@ -42,6 +44,8 @@ export interface InventoryItem {
 export interface CreateInventoryItemInput {
     name: string;
     unit: string;
+    purchaseUnit?: string;
+    conversionRate?: number;
     quantity: number;
     minQuantity: number;
     costPrice: number;
@@ -52,6 +56,7 @@ export type OrderStatus =
   'PENDING' | 'CONFIRMED' | 'PROCESSING' | 'COMPLETED' | 'CANCELLED';
 export interface OrderIngredient {
   ingredientId: string;
+  name: string;
   amount: number;
 }
 export interface OrderItem {
