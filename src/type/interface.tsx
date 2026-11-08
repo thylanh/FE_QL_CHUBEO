@@ -10,6 +10,58 @@ export interface User {
     createdAt: string;
 }
 
+export type EmployeeStatus = "ACTIVE" | "INACTIVE" | "RESIGNED";
+export type AttendanceStatus = "PRESENT" | "LATE" | "ABSENT" | "LEAVE" | "OFF" | "HOLIDAY";
+export type PayrollStatus = "DRAFT" | "PAID";
+
+export interface Employee {
+    id: string;
+    userId?: string | null;
+    code?: string | null;
+    fullName: string;
+    email?: string | null;
+    phone?: string | null;
+    department?: string | null;
+    position?: string | null;
+    hireDate?: string | null;
+    status?: EmployeeStatus;
+    baseSalary?: number | null;
+    note?: string | null;
+    createdAt?: string;
+    updatedAt?: string;
+}
+
+export interface EmployeeAttendance {
+    id?: string;
+    employeeId: string;
+    employee?: { id?: string; fullName?: string; code?: string };
+    workDate: string;
+    checkIn?: string | null;
+    checkOut?: string | null;
+    status: AttendanceStatus;
+    note?: string | null;
+    hoursWorked?: number;
+    createdAt?: string;
+}
+
+export interface EmployeePayroll {
+    id?: string;
+    employeeId: string;
+    employee?: { id?: string; fullName?: string; code?: string };
+    periodStart: string;
+    periodEnd: string;
+    baseSalary?: number;
+    workingDays?: number;
+    attendanceDays?: number;
+    overtimeHours?: number;
+    allowance?: number;
+    deduction?: number;
+    totalSalary?: number;
+    status: PayrollStatus;
+    paid?: boolean;
+    createdAt?: string;
+}
+
 // Menu and Inventory interfaces
 export interface MenuIngredient {
   ingredient_id: string;

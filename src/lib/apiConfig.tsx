@@ -1,4 +1,4 @@
-import { Role, User, MenuItem, InventoryItem, CreateInventoryItemInput, CreateOrderInput, Order, CalendarEvent } from "@/type/interface";
+import { Role, User, MenuItem, InventoryItem, CreateInventoryItemInput, CreateOrderInput, Order, CalendarEvent, Employee, EmployeeAttendance, EmployeePayroll, AttendanceStatus, PayrollStatus } from "@/type/interface";
 
 export type OrderPeriod = "today" | "week" | "month";
 
@@ -6,9 +6,9 @@ export const API_ENDPOINTS = {
     AUTH: {
         LOGIN: "/api/auth/login",
         LOGOUT: "/api/auth/logout",
-        USERS: "/api/auth/users",
-        REGISTER: "/api/auth/register",
-        USER_BY_ID: (id: string) => `/api/auth/users/${id}`,
+        USERS: "/api/users",
+        REGISTER: "/api/users/register",
+        USER_BY_ID: (id: string) => `/api/users/${id}`,
     },
     MENU: {
         LIST: "/api/menu",
@@ -34,6 +34,28 @@ export const API_ENDPOINTS = {
         CREATE: "/api/calendar",
         ITEM_BY_ID: (id: string) => `/api/calendar/${id}`,
     },
+    EMPLOYEES: {
+        LIST: "/api/employees",
+        CREATE: "/api/employees",
+        ITEM_BY_ID: (id: string) => `/api/employees/${id}`,
+        ATTENDANCE: {
+            LIST: "/api/employees/attendance",
+            CREATE: "/api/employees/attendance",
+        },
+        PAYROLLS: {
+            LIST: "/api/employees/payrolls",
+            GENERATE: "/api/employees/payrolls/generate",
+        },
+    },
+    ATTENDANCE: {
+        LIST: "/api/attendance",
+        CHECK_IN: "/api/attendance/check-in",
+        CHECK_OUT: "/api/attendance/check-out",
+    },
+    PAYROLL: {
+        LIST: "/api/payroll",
+        CALCULATE: "/api/payroll/calculate",
+    },
     REPORTS: {
         REVENUE: (from?: string, to?: string) => {
             const params = new URLSearchParams();
@@ -44,9 +66,7 @@ export const API_ENDPOINTS = {
         },
     },
 } as const;
-const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "https://be-ql-chubeo.onrender.com").replace(/\/$/, "");
-const API_TIMEOUT_MS = Number(process.env.NEXT_PUBLIC_API_TIMEOUT_MS || 15000);
-const API_CACHE_TTL_MS = Number(process.env.NEXT_PUBLIC_API_CACHE_TTL_MS || 60000);
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
 
 // ==========================================
 // Phân Quyền Nghiệp Vụ (RBAC)
@@ -156,7 +176,7 @@ function getCachedResponse<T>(cacheKey: string): T | undefined {
 function setCachedResponse<T>(cacheKey: string, data: T): void {
     responseCache.set(cacheKey, {
         data,
-        expiresAt: Date.now() + API_CACHE_TTL_MS,
+        expiresAt: Date.now() + 60000,
     });
 }
 
@@ -199,19 +219,12 @@ async function fetchWithAuth<T>(url: string, options: RequestInit = {}): Promise
         }
         try {
             const requestUrl = url.startsWith("http") ? url : `${API_BASE_URL}${url}`;
-            const controller = new AbortController();
-            const timeoutId = typeof window !== "undefined" ? window.setTimeout(() => controller.abort(), API_TIMEOUT_MS) : undefined;
 
             const response = await fetch(requestUrl, {
                 ...options,
                 headers,
                 credentials: "include",
-                signal: controller.signal,
             });
-
-            if (typeof window !== "undefined" && timeoutId) {
-                window.clearTimeout(timeoutId);
-            }
 
             const json = await response.json();
             if (!response.ok) {
@@ -238,7 +251,7 @@ async function fetchWithAuth<T>(url: string, options: RequestInit = {}): Promise
             if (error instanceof DOMException && error.name === "AbortError") {
                 return {
                     success: false,
-                    error: `Yêu cầu API quá chậm, vui lòng thử lại sau (${Math.round(API_TIMEOUT_MS / 1000)}s).`,
+                    error: "Yêu cầu API đã bị hủy.",
                 } as { success: boolean; data?: T; error?: string; details?: null };
             }
 
@@ -327,10 +340,28 @@ export const apiClient = {
         async getUsers() {
             return fetchWithAuth<User[]>(API_ENDPOINTS.AUTH.USERS);
         },
-        async register(data: { name: string; email: string; password: string; role: Role; phone?: string }) {
+        async register(data: {
+            username?: string;
+            displayName?: string;
+            name?: string;
+            email?: string;
+            password: string;
+            role: Role;
+            phone?: string;
+        }) {
+            const payload = {
+                username: data.username || data.email || data.name || "",
+                displayName: data.displayName || data.name || "",
+                name: data.name || data.displayName || data.username || "",
+                email: data.email || "",
+                password: data.password,
+                role: data.role,
+                phone: data.phone,
+            };
+
             return fetchWithAuth<User>(API_ENDPOINTS.AUTH.REGISTER, {
                 method: "POST",
-                body: JSON.stringify(data),
+                body: JSON.stringify(payload),
             });
         },
         async updateUser(id: string, data: Partial<{ name: string; role: Role; phone: string; password: string; status: "ACTIVE" | "INACTIVE" }>) {
@@ -435,6 +466,94 @@ export const apiClient = {
                 invalidateCacheByPrefix(API_ENDPOINTS.CALENDAR.LIST);
             }
             return response;
+        },
+    },
+    employees: {
+        async getEmployees() {
+            return fetchWithAuth<Employee[]>(API_ENDPOINTS.EMPLOYEES.LIST);
+        },
+        async getEmployee(id: string) {
+            return fetchWithAuth<Employee>(API_ENDPOINTS.EMPLOYEES.ITEM_BY_ID(id));
+        },
+        async createEmployee(data: Partial<Employee> & { fullName: string }) {
+            return fetchWithAuth<Employee>(API_ENDPOINTS.EMPLOYEES.CREATE, {
+                method: "POST",
+                body: JSON.stringify(data),
+            });
+        },
+        async updateEmployee(id: string, data: Partial<Employee>) {
+            return fetchWithAuth<Employee>(API_ENDPOINTS.EMPLOYEES.ITEM_BY_ID(id), {
+                method: "PATCH",
+                body: JSON.stringify(data),
+            });
+        },
+        async deleteEmployee(id: string) {
+            return fetchWithAuth<Employee>(API_ENDPOINTS.EMPLOYEES.ITEM_BY_ID(id), {
+                method: "DELETE",
+            });
+        },
+        async getAttendance(employeeId?: string, from?: string, to?: string) {
+            const params = new URLSearchParams();
+            if (employeeId) params.append("employeeId", employeeId);
+            if (from) params.append("from", from);
+            if (to) params.append("to", to);
+            const query = params.toString();
+            return fetchWithAuth<EmployeeAttendance[]>(`${API_ENDPOINTS.EMPLOYEES.ATTENDANCE.LIST}${query ? `?${query}` : ""}`);
+        },
+        async createAttendance(data: Partial<EmployeeAttendance> & { employeeId: string; workDate: string; status: AttendanceStatus }) {
+            return fetchWithAuth<EmployeeAttendance>(API_ENDPOINTS.EMPLOYEES.ATTENDANCE.CREATE, {
+                method: "POST",
+                body: JSON.stringify(data),
+            });
+        },
+        async getPayrolls(employeeId?: string, from?: string, to?: string) {
+            const params = new URLSearchParams();
+            if (employeeId) params.append("employeeId", employeeId);
+            if (from) params.append("from", from);
+            if (to) params.append("to", to);
+            const query = params.toString();
+            return fetchWithAuth<EmployeePayroll[]>(`${API_ENDPOINTS.EMPLOYEES.PAYROLLS.LIST}${query ? `?${query}` : ""}`);
+        },
+        async generatePayroll(data: Partial<EmployeePayroll> & { employeeId: string; periodStart: string; periodEnd: string; status?: PayrollStatus }) {
+            return fetchWithAuth<EmployeePayroll>(API_ENDPOINTS.EMPLOYEES.PAYROLLS.GENERATE, {
+                method: "POST",
+                body: JSON.stringify(data),
+            });
+        },
+    },
+    attendance: {
+        async getAttendance(employeeId?: string) {
+            const params = new URLSearchParams();
+            if (employeeId) params.append("employeeId", employeeId);
+            const query = params.toString();
+            return fetchWithAuth<EmployeeAttendance[]>(`${API_ENDPOINTS.ATTENDANCE.LIST}${query ? `?${query}` : ""}`);
+        },
+        async checkIn(data: Partial<EmployeeAttendance> & { employeeId: string; checkIn?: string; note?: string }) {
+            return fetchWithAuth<EmployeeAttendance>(API_ENDPOINTS.ATTENDANCE.CHECK_IN, {
+                method: "POST",
+                body: JSON.stringify(data),
+            });
+        },
+        async checkOut(data: Partial<EmployeeAttendance> & { employeeId: string; checkOut?: string; note?: string }) {
+            return fetchWithAuth<EmployeeAttendance>(API_ENDPOINTS.ATTENDANCE.CHECK_OUT, {
+                method: "POST",
+                body: JSON.stringify(data),
+            });
+        },
+    },
+    payroll: {
+        async getPayrolls(employeeId?: string, month?: string) {
+            const params = new URLSearchParams();
+            if (employeeId) params.append("employeeId", employeeId);
+            if (month) params.append("month", month);
+            const query = params.toString();
+            return fetchWithAuth<EmployeePayroll[]>(`${API_ENDPOINTS.PAYROLL.LIST}${query ? `?${query}` : ""}`);
+        },
+        async calculate(data: Partial<EmployeePayroll> & { employeeId: string; month?: string; baseSalary?: number; allowance?: number; deduction?: number; overtimeHours?: number; paid?: boolean }) {
+            return fetchWithAuth<EmployeePayroll>(API_ENDPOINTS.PAYROLL.CALCULATE, {
+                method: "POST",
+                body: JSON.stringify(data),
+            });
         },
     },
     orders: {

@@ -92,8 +92,9 @@ const othersItems: NavItem[] = [
     icon: <PlugInIcon />,
     name: "Quản lý nhân sự",
     subItems: [
-      { name: "Danh sách nhân viên", path: "/signin", pro: false },
-      { name: "Đăng ký nhân viên", path: "/signup", pro: false },
+      { name: "Danh sách nhân viên", path: "/employees", pro: false },
+      { name: "Đăng ký nhân viên", path: "/employees/register", pro: false },
+      { name: "Tạo tài khoản người dùng", path: "/employees/account", pro: false },
     ],
   },
 ];
