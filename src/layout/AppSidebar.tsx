@@ -71,8 +71,8 @@ const othersItems: NavItem[] = [
     name: "Báo Cáo & Thống kê",
     subItems: [
       { name: "Báo cáo tháng", path: "/reports", pro: false, roles: ["ADMIN", "MANAGER"] },
-      { name: "Line Chart", path: "/line-chart", pro: false },
-      { name: "Bar Chart", path: "/bar-chart", pro: false },
+      // { name: "Line Chart", path: "/line-chart", pro: false },
+      // { name: "Bar Chart", path: "/bar-chart", pro: false },
     ],
   },
   // {
