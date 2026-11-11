@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiClient, type OrderPeriod } from "@/lib/apiConfig";
-import { Order, OrderStatus } from "@/type/interface";
+import { Order, OrderReceipt, OrderStatus } from "@/type/interface";
 
 type StatusFilter = "ALL" | OrderStatus;
 type DateFilter = "today" | "7days" | "month";
@@ -84,6 +84,10 @@ export default function OrderManagement() {
   const [updatingOrder, setUpdatingOrder] = useState<string | null>(null);
   const [expandedOrder, setExpandedOrder] = useState<string | null>(null);
   const [cancelOrderId, setCancelOrderId] = useState<string | null>(null);
+  const [receipt, setReceipt] = useState<OrderReceipt | null>(null);
+  const [isReceiptOpen, setIsReceiptOpen] = useState(false);
+  const [loadingReceipt, setLoadingReceipt] = useState<string | null>(null);
+  const [receiptError, setReceiptError] = useState<string | null>(null);
   const pageSize = 8;
   const cancelOrder = orders.find((order) => order.id === cancelOrderId);
 
@@ -191,6 +195,30 @@ export default function OrderManagement() {
 
     const cancelled = await handleStatusChange(cancelOrder, "CANCELLED");
     if (cancelled) setCancelOrderId(null);
+  };
+
+  const openReceipt = async (order: Order) => {
+    setIsReceiptOpen(true);
+    setReceipt(null);
+    setReceiptError(null);
+    setLoadingReceipt(order.id);
+
+    try {
+      const response = await apiClient.orders.getReceipt(order.id);
+      if (response.success && response.data) {
+        setReceipt(response.data);
+      } else {
+        setReceiptError(response.error || `Không thể tải hóa đơn #${order.code}.`);
+      }
+    } catch (loadError) {
+      setReceiptError(
+        loadError instanceof Error
+          ? loadError.message
+          : `Đã xảy ra lỗi khi tải hóa đơn #${order.code}.`
+      );
+    } finally {
+      setLoadingReceipt(null);
+    }
   };
   const tabs: { label: string; value: StatusFilter; count: number }[] = [
     { label: "Tất cả đơn", value: "ALL", count: counts.all },
@@ -314,6 +342,7 @@ export default function OrderManagement() {
                       setError(null);
                       setCancelOrderId(order.id);
                     }}
+                    onPrint={() => void openReceipt(order)}
                   />
                 );
               })}
@@ -400,6 +429,105 @@ export default function OrderManagement() {
             </section>
           </div>
         )}
+      {isReceiptOpen && (
+        <div
+          className="receipt-print-overlay fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/50 p-4"
+          onClick={(event) => {
+            if (event.target === event.currentTarget && !loadingReceipt) {
+              setIsReceiptOpen(false);
+            }
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="receipt-title"
+            className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl"
+          >
+            <div className="receipt-print-controls mb-4 flex items-center justify-between gap-3">
+              <h2 id="receipt-title" className="text-sm font- ">
+                {/* HÓA ĐƠN */}
+              </h2>
+              <button
+                type="button"
+                onClick={() => setIsReceiptOpen(false)}
+                disabled={Boolean(loadingReceipt)}
+                aria-label="Đóng hóa đơn"
+                className="rounded-lg px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 disabled:opacity-50"
+              >
+                Đóng
+              </button>
+            </div>
+            {loadingReceipt ? (
+              <p role="status" className="py-12 text-center text-sm text-gray-500">
+                Đang tải hóa đơn...
+              </p>
+            ) : receiptError ? (
+              <p role="alert" className="py-8 text-center text-sm text-red-600">
+                {receiptError}
+              </p>
+            ) : receipt ? (
+              <>
+                <ReceiptPaper receipt={receipt} />
+                <div className="receipt-print-controls mt-4 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-amber-600"
+                  >
+                    In hóa đơn
+                  </button>
+                </div>
+              </>
+            ) : null}
+          </section>
+          <style jsx global>{`
+            @media print {
+              @page {
+                size: 80mm auto;
+                margin: 3mm;
+              }
+
+              body * {
+                visibility: hidden !important;
+              }
+
+              .receipt-print-overlay,
+              .receipt-print-overlay * {
+                visibility: visible !important;
+              }
+
+              .receipt-print-overlay {
+                position: absolute !important;
+                inset: 0 !important;
+                display: block !important;
+                overflow: visible !important;
+                padding: 0 !important;
+                background: #fff !important;
+              }
+
+              .receipt-print-overlay > section {
+                width: 80mm !important;
+                max-width: 80mm !important;
+                margin: 0 auto !important;
+                padding: 0 !important;
+                box-shadow: none !important;
+              }
+
+              .receipt-print-controls {
+                display: none !important;
+              }
+
+              .receipt-paper {
+                width: 80mm !important;
+                max-width: 80mm !important;
+                padding: 0 !important;
+                color: #000 !important;
+              }
+            }
+          `}</style>
+        </div>
+      )}
     </div>
   );
 }
@@ -453,6 +581,7 @@ function OrderRows({
   onToggle,
   onAdvance,
   onCancel,
+  onPrint,
 }: {
   order: Order;
   itemCount: number;
@@ -461,6 +590,7 @@ function OrderRows({
   onToggle: () => void;
   onAdvance: () => void;
   onCancel: () => void;
+  onPrint: () => void;
 }) {
   const nextStatus = nextStatusByCurrent[order.status];
 
@@ -506,6 +636,13 @@ function OrderRows({
           </button>
         </td>
         <td className="px-6 py-4 text-right">
+          <button
+            type="button"
+            onClick={onPrint}
+            className="mr-2 rounded-lg border border-amber-200 px-3 py-2 text-xs font-semibold text-amber-700 transition hover:bg-amber-50 dark:border-amber-900 dark:text-amber-400 dark:hover:bg-amber-950/40"
+          >
+            In bill
+          </button>
           {order.status !== "COMPLETED" && order.status !== "CANCELLED" && (
             <button
               type="button"
@@ -572,5 +709,69 @@ function OrderRows({
         </tr>
       )}
     </>
+  );
+}
+
+function ReceiptPaper({ receipt }: { receipt: OrderReceipt }) {
+  const { order } = receipt;
+
+  return (
+    <article
+      className="receipt-paper mx-auto max-w-full bg-white px-4 py-5 font-mono text-xs text-gray-900"
+      style={{ width: `${receipt.paperWidthMm}mm` }}
+    >
+      <header className="border-b border-dashed border-gray-400 pb-3 text-center">
+        <h3 className="text-base font-bold uppercase">{receipt.title}</h3>
+        <p className="mt-1">Mã đơn: #{order.code}</p>
+        <p className="mt-1">{formatOrderTime(order.createdAt)}</p>
+      </header>
+
+      <section className="space-y-1 border-b border-dashed border-gray-400 py-3">
+        <p>Loại đơn: {order.orderType}</p>
+        <p>Chỗ: {order.table || "—"}</p>
+        <p>Số khách: {order.customerCount}</p>
+        {order.note && <p>Ghi chú: {order.note}</p>}
+      </section>
+
+      <section className="border-b border-dashed border-gray-400 py-3">
+        <div className="mb-2 flex flex-nowrap items-center justify-between gap-2 font-semibold">
+          <span className="shrink-0 whitespace-nowrap">Tên Món</span>
+          <span className="shrink-0 whitespace-nowrap text-right">
+            Thành tiền
+          </span>
+        </div>
+        <ul className="space-y-3">
+          {order.items.map((line, index) => (
+            <li key={`${line.name}-${index}`}>
+              <p className="break-words font-semibold">{line.name}</p>
+              <div className="mt-1 flex justify-between gap-2">
+                <span>
+                  {line.quantity} × {currency(line.unitPrice)}
+                </span>
+                <span className="shrink-0">{currency(line.amount)}</span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section className="space-y-2 py-3">
+        <div className="flex justify-between gap-2">
+          <span>Tạm tính</span>
+          <span>{currency(order.subtotal)}</span>
+        </div>
+        <div className="flex justify-between gap-2">
+          <span>Phí dịch vụ</span>
+          <span>{currency(order.serviceFee)}</span>
+        </div>
+        <div className="flex justify-between gap-2 border-t border-dashed border-gray-400 pt-2 text-sm font-bold">
+          <span>Tổng tiền</span>
+          <span>{currency(order.total)}</span>
+        </div>
+      </section>
+      <footer className="border-t border-dashed border-gray-400 pt-3 text-center">
+        Bún đậu chú béo xin cảm ơn quý khách!
+      </footer>
+    </article>
   );
 }

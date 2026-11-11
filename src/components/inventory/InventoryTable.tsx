@@ -2,7 +2,6 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
-import { useModal } from "@/hooks/useModal";
 import { Modal } from "@/components/ui/modal";
 import Pagination from "@/components/menu/Pagination";
 import { InventoryItem, CreateInventoryItemInput } from "@/type/interface";
@@ -10,13 +9,10 @@ import { apiClient } from "@/lib/apiConfig";
 import { Table, TableBody, TableCell, TableHeader, TableRow } from "@/components/ui/table";
 
 type StockFilter = "Tất cả" | "Sắp hết" | "Hết hàng" | "Còn hàng";
-type InventoryAction = "IN" | "OUT" | "ADJUST";
-
 const itemsPerPage = 9;
 
 export default function InventoryTable() {
   const { user } = useAuth();
-  const { isOpen, openModal, closeModal } = useModal();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -24,11 +20,6 @@ export default function InventoryTable() {
   const [searchQuery, setSearchQuery] = useState("");
   const [stockFilter, setStockFilter] = useState<StockFilter>("Tất cả");
   const [currentPage, setCurrentPage] = useState(1);
-  const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
-  const [action, setAction] = useState<InventoryAction>("IN");
-  const [amount, setAmount] = useState("");
-  const [formError, setFormError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [newItem, setNewItem] = useState({ name: "", unit: "", purchaseUnit: "", conversionRate: "", quantity: "", minQuantity: "", costPrice: "" });
   const [createError, setCreateError] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
@@ -167,59 +158,6 @@ export default function InventoryTable() {
     window.setTimeout(() => setToastMessage(null), 3000);
   };
 
-  const openInventoryAction = (item: InventoryItem, selectedAction: InventoryAction) => {
-    setEditingItem(item);
-    setAction(selectedAction);
-    setAmount("");
-    setFormError(null);
-    openModal();
-  };
-
-  const handleInventoryAction = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const parsedAmount = Number(amount);
-    if (!editingItem || !Number.isFinite(parsedAmount)) {
-      setFormError("Vui lòng nhập số lượng hợp lệ.");
-      return;
-    }
-    if (action === "ADJUST" && (!Number.isInteger(parsedAmount) || parsedAmount === 0)) {
-      setFormError("Số điều chỉnh phải là số nguyên khác 0.");
-      return;
-    }
-    if (action !== "ADJUST" && parsedAmount <= 0) {
-      setFormError("Số lượng nhập hoặc xuất phải lớn hơn 0.");
-      return;
-    }
-
-    const adjustedAmount = action === "ADJUST" ? parsedAmount : amount ? parsedAmount : 0;
-
-    if (action === "OUT" && adjustedAmount > editingItem.quantity) {
-      setFormError("Số lượng xuất không được lớn hơn tồn kho hiện tại.");
-      return;
-    }
-
-    setIsSubmitting(true);
-    setFormError(null);
-    const response = action === "IN"
-      ? await apiClient.inventory.stockIn(editingItem.id, adjustedAmount, editingItem.purchaseUnit, editingItem.conversionRate)
-      : action === "OUT"
-        ? await apiClient.inventory.stockOut(editingItem.id, adjustedAmount, editingItem.purchaseUnit, editingItem.conversionRate)
-        : null;
-    setIsSubmitting(false);
-
-    if (!response || !response.data) {
-      setFormError(response?.error || "Không thể cập nhật tồn kho.");
-      return;
-    }
-
-    const updatedItem = response.data;
-    setInventory((items) => items.map((item) => item.id === updatedItem.id ? updatedItem : item));
-    const actionLabel = action === "IN" ? "nhập kho" : action === "OUT" ? "xuất kho" : "điều chỉnh tồn kho";
-    setToastMessage(`Đã ${actionLabel} ${updatedItem.name}.`);
-    window.setTimeout(() => setToastMessage(null), 3000);
-    closeModal();
-  };
-
   const renderStockStatus = (item: InventoryItem) => {
     const isOutOfStock = item.quantity <= 0;
     const isLowStock = !isOutOfStock && item.quantity <= item.minQuantity;
@@ -331,8 +269,6 @@ export default function InventoryTable() {
                   <TableCell className="px-5 py-4">
                     <div className="flex flex-wrap gap-2">
                       {canAdjustInventory && <>
-                        <button type="button" onClick={() => openInventoryAction(item, "IN")} className="rounded-md bg-green-600 px-3 py-2 text-xs font-semibold text-white hover:bg-green-700">Nhập</button>
-                        <button type="button" onClick={() => openInventoryAction(item, "OUT")} className="rounded-md bg-amber-500 px-3 py-2 text-xs font-semibold text-white hover:bg-amber-600">Xuất</button>
                         <button type="button" onClick={() => { void handleDeleteInventoryItem(item); }} disabled={deletingItemId === item.id} className="rounded-md bg-red-600 px-3 py-2 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-60">{deletingItemId === item.id ? "Đang xóa..." : "Xóa"}</button>
                       </>}
                     </div>
@@ -360,9 +296,6 @@ export default function InventoryTable() {
               <div className="col-span-2"><p className="text-xs text-gray-500 dark:text-gray-400">Đơn giá nhập</p><p className="mt-1 font-medium text-gray-700 dark:text-gray-300">{new Intl.NumberFormat("vi-VN").format(item.costPrice)} VNĐ/{item.unit}</p></div>
             </div>
             {canAdjustInventory && <div className="mt-2 grid grid-cols-2 gap-2">
-              <button type="button" onClick={() => openInventoryAction(item, "IN")} className="rounded-md bg-green-600 px-2 py-2 text-sm font-semibold text-white">Nhập</button>
-              <button type="button" onClick={() => openInventoryAction(item, "OUT")} className="rounded-md bg-amber-500 px-2 py-2 text-sm font-semibold text-white">Xuất</button>
-              <button type="button" onClick={() => openInventoryAction(item, "ADJUST")} className="rounded-md border border-gray-200 px-2 py-2 text-sm font-semibold text-gray-700 dark:border-white/[0.1] dark:text-gray-300">Điều chỉnh</button>
               <button type="button" onClick={() => { void handleDeleteInventoryItem(item); }} disabled={deletingItemId === item.id} className="rounded-md bg-red-600 px-2 py-2 text-sm font-semibold text-white disabled:opacity-60">{deletingItemId === item.id ? "Đang xóa..." : "Xóa"}</button>
             </div>}
           </div>
@@ -426,35 +359,6 @@ export default function InventoryTable() {
           <div className="flex justify-end gap-2">
             <button type="button" onClick={() => setIsCreateOpen(false)} className="rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 dark:border-gray-700 dark:text-gray-300">Hủy</button>
             <button type="submit" disabled={isCreating} className="rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60">{isCreating ? "Đang lưu..." : "Thêm nguyên liệu"}</button>
-          </div>
-        </form>
-      </Modal>
-
-      <Modal isOpen={isOpen} onClose={closeModal} className="max-w-[520px] p-5 sm:p-7">
-        <form onSubmit={handleInventoryAction} className="space-y-5">
-          <div>
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white/90">
-              {action === "IN" ? "Nhập kho" : action === "OUT" ? "Xuất kho" : null}
-            </h2>
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-              {editingItem?.name} · Hiện có {editingItem?.quantity} {editingItem?.unit}
-              {editingItem?.purchaseUnit && editingItem.conversionRate ? ` · 1 ${editingItem.purchaseUnit} = ${editingItem.conversionRate} ${editingItem.unit}` : ""}
-            </p>
-          </div>
-          <label className="block space-y-2 text-sm font-medium text-gray-700 dark:text-gray-300">
-            <input
-              type="number"
-              min={action === "ADJUST" ? undefined : "1"}
-              value={amount}
-              onChange={(event) => setAmount(event.target.value)}
-              required
-              className="h-11 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700 dark:bg-gray-900"
-            />
-          </label>
-          {formError && <p role="alert" className="text-sm text-red-500">{formError}</p>}
-          <div className="flex justify-end gap-2">
-            <button type="button" onClick={closeModal} className="rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 dark:border-gray-700 dark:text-gray-300">Hủy</button>
-            <button type="submit" disabled={isSubmitting} className="rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60">{isSubmitting ? "Đang lưu..." : "Xác nhận"}</button>
           </div>
         </form>
       </Modal>

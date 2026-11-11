@@ -99,7 +99,7 @@ export default function RecentOrders({ orders, isLoading = false, error = null }
               <TableRow><TableCell className="py-6 text-center text-red-500">{error}</TableCell></TableRow>
             )}
             {!isLoading && !error && visibleOrders.length === 0 && (
-              <TableRow><TableCell className="py-6 text-center text-gray-500">Chưa có đơn hàng.</TableCell></TableRow>
+              <TableRow><TableCell className="py-6 text-center text-gray-500">Chưa có đơn hàng hôm nay!</TableCell></TableRow>
             )}
             {!isLoading && !error && visibleOrders.map((order) => (
               <TableRow key={order.id} className="hover:bg-gray-50/50 dark:hover:bg-white/[0.01]">

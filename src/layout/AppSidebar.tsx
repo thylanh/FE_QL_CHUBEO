@@ -3,6 +3,8 @@ import React, { useEffect, useRef, useState, useCallback } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useSidebar } from "../context/SidebarContext";
+import { useAuth } from "../context/AuthContext";
+import { Role } from "../type/interface";
 import {
   BoxCubeIcon,
   CalenderIcon,
@@ -20,7 +22,7 @@ type NavItem = {
   name: string;
   icon: React.ReactNode;
   path?: string;
-  subItems?: { name: string; path: string; pro?: boolean; new?: boolean }[];
+  subItems?: { name: string; path: string; pro?: boolean; new?: boolean; roles?: Role[] }[];
 };
 
 type OpenSubmenu = {
@@ -39,17 +41,13 @@ const navItems: NavItem[] = [
     name: "Lịch làm việc & Đăng ký ca",
     path: "/calendar",
   },
-  // {
-  //   icon: <UserCircleIcon />,
-  //   name: "Hồ sơ nhân viên",
-  //   path: "/profile",
-  // },
   {
     name: "Bán hàng & POS",
     icon: <ListIcon />,
     subItems: [
       { name: "Tạo đơn hàng", path: "/form-elements", pro: false },
       { name: "Quản lý đơn hàng", path: "/orders", pro: false },
+      { name: "Sổ thu chi", path: "/cashbook", pro: false, roles: ["ADMIN", "MANAGER"] },
     ],
   },
   {
@@ -62,7 +60,7 @@ const navItems: NavItem[] = [
     icon: <PageIcon />,
     subItems: [
       { name: "Danh sách nguyên liệu", path: "/inventory", pro: false },
-      { name: "Xuất nhập tồn kho", path: "/blank", pro: false },
+      { name: "Xuất nhập tồn kho", path: "/inventory/transactions", pro: false, roles: ["ADMIN", "MANAGER"] },
     ],
   },
 ];
@@ -72,22 +70,23 @@ const othersItems: NavItem[] = [
     icon: <PieChartIcon />,
     name: "Báo Cáo & Thống kê",
     subItems: [
+      { name: "Báo cáo tháng", path: "/reports", pro: false, roles: ["ADMIN", "MANAGER"] },
       { name: "Line Chart", path: "/line-chart", pro: false },
       { name: "Bar Chart", path: "/bar-chart", pro: false },
     ],
   },
-  {
-    icon: <BoxCubeIcon />,
-    name: "Hồ sơ & Chi Nhánh",
-    subItems: [
-      { name: "Alerts", path: "/alerts", pro: false },
-      { name: "Avatar", path: "/avatars", pro: false },
-      { name: "Badge", path: "/badge", pro: false },
-      { name: "Buttons", path: "/buttons", pro: false },
-      { name: "Images", path: "/images", pro: false },
-      { name: "Videos", path: "/videos", pro: false },
-    ],
-  },
+  // {
+  //   icon: <BoxCubeIcon />,
+  //   name: "Hồ sơ & Chi Nhánh",
+  //   subItems: [
+  //     { name: "Alerts", path: "/alerts", pro: false },
+  //     { name: "Avatar", path: "/avatars", pro: false },
+  //     { name: "Badge", path: "/badge", pro: false },
+  //     { name: "Buttons", path: "/buttons", pro: false },
+  //     { name: "Images", path: "/images", pro: false },
+  //     { name: "Videos", path: "/videos", pro: false },
+  //   ],
+  // },
   {
     icon: <PlugInIcon />,
     name: "Quản lý nhân sự",
@@ -101,7 +100,9 @@ const othersItems: NavItem[] = [
 
 const AppSidebar: React.FC = () => {
   const { isExpanded, isMobileOpen, isHovered, setIsHovered } = useSidebar();
+  const { user } = useAuth();
   const pathname = usePathname();
+  const canAccess = (roles?: Role[]) => !roles || (!!user && roles.includes(user.role));
 
   const renderMenuItems = (
     navItems: NavItem[],
@@ -177,7 +178,7 @@ const AppSidebar: React.FC = () => {
               }}
             >
               <ul className="mt-2 space-y-1 ml-9">
-                {nav.subItems.map((subItem) => (
+                {nav.subItems.filter((subItem) => canAccess(subItem.roles)).map((subItem) => (
                   <li key={subItem.name}>
                     <Link
                       href={subItem.path}
@@ -236,7 +237,7 @@ const AppSidebar: React.FC = () => {
   ].reduce<OpenSubmenu | null>((matchedSubmenu, menu) => {
     if (matchedSubmenu) return matchedSubmenu;
     const index = menu.items.findIndex((nav) =>
-      nav.subItems?.some((subItem) => isActive(subItem.path))
+      nav.subItems?.some((subItem) => canAccess(subItem.roles) && isActive(subItem.path))
     );
     return index >= 0 ? { type: menu.type, index } : null;
   }, null);

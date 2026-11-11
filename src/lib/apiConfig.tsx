@@ -1,4 +1,4 @@
-import { Role, User, MenuItem, InventoryItem, CreateInventoryItemInput, CreateOrderInput, Order, CalendarEvent, Employee, EmployeeAttendance, EmployeePayroll, AttendanceStatus, PayrollStatus } from "@/type/interface";
+import { Role, User, MenuItem, InventoryItem, CreateInventoryItemInput, CreateOrderInput, Order, OrderReceipt, CalendarEvent, Employee, EmployeeAttendance, EmployeePayroll, CalculatePayrollInput, AttendanceStatus, CashbookListResponse, CashbookType, CreateCashbookEntryInput, CashbookEntry, CreateInventoryStockInInput, CreateInventoryStockOutInput, InventoryTransactionSummaryResponse, InventoryTransactionsResponse } from "@/type/interface";
 
 export type OrderPeriod = "today" | "week" | "month";
 
@@ -21,6 +21,7 @@ export const API_ENDPOINTS = {
         LIST: "/api/orders",
         CREATE: "/api/orders",
         UPDATE_STATUS: (id: string) => `/api/orders/${id}/status`,
+        RECEIPT: (id: string) => `/api/orders/${id}/receipt`,
     },
     INVENTORY: {
         LIST: "/api/inventory",
@@ -28,6 +29,8 @@ export const API_ENDPOINTS = {
         ITEM_BY_ID: (id: string) => `/api/inventory/${id}`,
         STOCK_IN: (id: string) => `/api/inventory/${id}/stock-in`,
         STOCK_OUT: (id: string) => `/api/inventory/${id}/stock-out`,
+        TRANSACTIONS: "/api/inventory/transactions",
+        TRANSACTION_SUMMARY: "/api/inventory/transactions/summary",
     },
     CALENDAR: {
         LIST: "/api/calendar",
@@ -41,10 +44,6 @@ export const API_ENDPOINTS = {
         ATTENDANCE: {
             LIST: "/api/employees/attendance",
             CREATE: "/api/employees/attendance",
-        },
-        PAYROLLS: {
-            LIST: "/api/employees/payrolls",
-            GENERATE: "/api/employees/payrolls/generate",
         },
     },
     ATTENDANCE: {
@@ -64,6 +63,10 @@ export const API_ENDPOINTS = {
             const query = params.toString();
             return `/api/reports/revenue${query ? `?${query}` : ""}`;
         },
+    },
+    CASHBOOK: {
+        LIST: "/api/cashbook",
+        CREATE: "/api/cashbook",
     },
 } as const;
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/$/, "");
@@ -380,6 +383,36 @@ export const apiClient = {
         async getInventory() {
             return fetchWithAuth<InventoryItem[]>(API_ENDPOINTS.INVENTORY.LIST);
         },
+        async getTransactions(filters: {
+            from?: string;
+            to?: string;
+            inventoryItemId?: string;
+            type?: "IN" | "OUT" | "ADJUSTMENT";
+        } = {}) {
+            const params = new URLSearchParams();
+            if (filters.from) params.append("from", filters.from);
+            if (filters.to) params.append("to", filters.to);
+            if (filters.inventoryItemId) params.append("inventoryItemId", filters.inventoryItemId);
+            if (filters.type) params.append("type", filters.type);
+            const query = params.toString();
+            return fetchWithAuth<InventoryTransactionsResponse>(
+                `${API_ENDPOINTS.INVENTORY.TRANSACTIONS}${query ? `?${query}` : ""}`
+            );
+        },
+        async getTransactionSummary(filters: {
+            from?: string;
+            to?: string;
+            inventoryItemId?: string;
+        } = {}) {
+            const params = new URLSearchParams();
+            if (filters.from) params.append("from", filters.from);
+            if (filters.to) params.append("to", filters.to);
+            if (filters.inventoryItemId) params.append("inventoryItemId", filters.inventoryItemId);
+            const query = params.toString();
+            return fetchWithAuth<InventoryTransactionSummaryResponse>(
+                `${API_ENDPOINTS.INVENTORY.TRANSACTION_SUMMARY}${query ? `?${query}` : ""}`
+            );
+        },
         async createInventoryItem(data: CreateInventoryItemInput) {
             return fetchWithAuth<InventoryItem>(API_ENDPOINTS.INVENTORY.CREATE, {
                 method: "POST",
@@ -391,17 +424,27 @@ export const apiClient = {
                 method: "DELETE",
             });
         },
-        async stockIn(id: string, quantity: number, purchaseUnit?: string, conversionRate?: number) {
-            return fetchWithAuth<InventoryItem>(API_ENDPOINTS.INVENTORY.STOCK_IN(id), {
+        async stockIn(id: string, data: CreateInventoryStockInInput) {
+            const response = await fetchWithAuth<InventoryItem>(API_ENDPOINTS.INVENTORY.STOCK_IN(id), {
                 method: "POST",
-                body: JSON.stringify({ quantity, purchaseUnit, conversionRate }),
+                body: JSON.stringify(data),
             });
+            if (response.success) {
+                invalidateCacheByPrefix(API_ENDPOINTS.INVENTORY.LIST);
+                invalidateCacheByPrefix(API_ENDPOINTS.INVENTORY.TRANSACTIONS);
+            }
+            return response;
         },
-        async stockOut(id: string, quantity: number, purchaseUnit?: string, conversionRate?: number) {
-            return fetchWithAuth<InventoryItem>(API_ENDPOINTS.INVENTORY.STOCK_OUT(id), {
+        async stockOut(id: string, data: CreateInventoryStockOutInput) {
+            const response = await fetchWithAuth<InventoryItem>(API_ENDPOINTS.INVENTORY.STOCK_OUT(id), {
                 method: "POST",
-                body: JSON.stringify({ quantity, purchaseUnit, conversionRate }),
+                body: JSON.stringify(data),
             });
+            if (response.success) {
+                invalidateCacheByPrefix(API_ENDPOINTS.INVENTORY.LIST);
+                invalidateCacheByPrefix(API_ENDPOINTS.INVENTORY.TRANSACTIONS);
+            }
+            return response;
         },
     },
     menu: {
@@ -506,20 +549,6 @@ export const apiClient = {
                 body: JSON.stringify(data),
             });
         },
-        async getPayrolls(employeeId?: string, from?: string, to?: string) {
-            const params = new URLSearchParams();
-            if (employeeId) params.append("employeeId", employeeId);
-            if (from) params.append("from", from);
-            if (to) params.append("to", to);
-            const query = params.toString();
-            return fetchWithAuth<EmployeePayroll[]>(`${API_ENDPOINTS.EMPLOYEES.PAYROLLS.LIST}${query ? `?${query}` : ""}`);
-        },
-        async generatePayroll(data: Partial<EmployeePayroll> & { employeeId: string; periodStart: string; periodEnd: string; status?: PayrollStatus }) {
-            return fetchWithAuth<EmployeePayroll>(API_ENDPOINTS.EMPLOYEES.PAYROLLS.GENERATE, {
-                method: "POST",
-                body: JSON.stringify(data),
-            });
-        },
     },
     attendance: {
         async getAttendance(employeeId?: string) {
@@ -547,13 +576,27 @@ export const apiClient = {
             if (employeeId) params.append("employeeId", employeeId);
             if (month) params.append("month", month);
             const query = params.toString();
-            return fetchWithAuth<EmployeePayroll[]>(`${API_ENDPOINTS.PAYROLL.LIST}${query ? `?${query}` : ""}`);
+            const response = await fetchWithAuth<EmployeePayroll[] | EmployeePayroll>(
+                `${API_ENDPOINTS.PAYROLL.LIST}${query ? `?${query}` : ""}`,
+            );
+            if (!response.success || response.data === undefined) {
+                return { ...response, data: undefined };
+            }
+
+            return {
+                ...response,
+                data: Array.isArray(response.data) ? response.data : [response.data],
+            };
         },
-        async calculate(data: Partial<EmployeePayroll> & { employeeId: string; month?: string; baseSalary?: number; allowance?: number; deduction?: number; overtimeHours?: number; paid?: boolean }) {
-            return fetchWithAuth<EmployeePayroll>(API_ENDPOINTS.PAYROLL.CALCULATE, {
+        async calculate(data: CalculatePayrollInput) {
+            const response = await fetchWithAuth<EmployeePayroll>(API_ENDPOINTS.PAYROLL.CALCULATE, {
                 method: "POST",
                 body: JSON.stringify(data),
             });
+            if (response.success) {
+                invalidateCacheByPrefix(API_ENDPOINTS.PAYROLL.LIST);
+            }
+            return response;
         },
     },
     orders: {
@@ -561,6 +604,10 @@ export const apiClient = {
             const search = new URLSearchParams();
             search.append("period", period);
             return fetchWithAuth<Order[]>(`${API_ENDPOINTS.ORDERS.LIST}?${search.toString()}`);
+        },
+        async getOrdersBetween(from: string, to: string) {
+            const params = new URLSearchParams({ from, to });
+            return fetchWithAuth<Order[]>(`${API_ENDPOINTS.ORDERS.LIST}?${params.toString()}`);
         },
         async createOrder(data: CreateOrderInput) {
             return fetchWithAuth<Order>(API_ENDPOINTS.ORDERS.CREATE, {
@@ -573,6 +620,36 @@ export const apiClient = {
                 method: "PATCH",
                 body: JSON.stringify({ status }),
             });
+        },
+        async getReceipt(id: string) {
+            return fetchWithAuth<OrderReceipt>(API_ENDPOINTS.ORDERS.RECEIPT(id));
+        },
+    },
+    cashbook: {
+        async getEntries(filters: { type?: CashbookType; from?: string; to?: string } = {}) {
+            const params = new URLSearchParams();
+            if (filters.type) params.append("type", filters.type);
+            if (filters.from) params.append("from", filters.from);
+            if (filters.to) params.append("to", filters.to);
+            const query = params.toString();
+            return fetchWithAuth<CashbookListResponse>(
+                `${API_ENDPOINTS.CASHBOOK.LIST}${query ? `?${query}` : ""}`
+            );
+        },
+        async createEntry(data: CreateCashbookEntryInput) {
+            const response = await fetchWithAuth<CashbookEntry>(API_ENDPOINTS.CASHBOOK.CREATE, {
+                method: "POST",
+                body: JSON.stringify(data),
+            });
+            if (response.success) {
+                invalidateCacheByPrefix(API_ENDPOINTS.CASHBOOK.LIST);
+            }
+            return response;
+        },
+    },
+    reports: {
+        async getRevenue(from?: string, to?: string) {
+            return fetchWithAuth<unknown>(API_ENDPOINTS.REPORTS.REVENUE(from, to));
         },
     },
 };

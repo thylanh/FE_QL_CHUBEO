@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { apiClient } from "@/lib/apiConfig";
 import type { AttendanceStatus, Employee, EmployeeAttendance, EmployeePayroll, EmployeeStatus } from "@/type/interface";
 
@@ -27,7 +27,21 @@ const attendanceStatusLabels: Record<AttendanceStatus, string> = {
 
 function formatCurrency(value?: number | null) {
   if (typeof value !== "number" || Number.isNaN(value)) return "0đ";
-  return `${new Intl.NumberFormat("vi-VN").format(value)}đ`;
+  return `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 2 }).format(value)}đ`;
+}
+
+function formatPayrollMonth(month: string) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  if (!year || !monthNumber) return month;
+  return new Intl.DateTimeFormat("vi-VN", { month: "2-digit", year: "numeric" }).format(
+    new Date(year, monthNumber - 1, 1),
+  );
+}
+
+function formatWorkedTime(totalMinutes: number) {
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${hours} giờ ${minutes} phút`;
 }
 
 function formatDayMonth(value?: string | Date | null) {
@@ -65,6 +79,14 @@ export default function EmployeeManagement() {
   const [attendanceRecords, setAttendanceRecords] = useState<EmployeeAttendance[]>([]);
   const [payrollRecords, setPayrollRecords] = useState<EmployeePayroll[]>([]);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
+  const [isPayrollFormOpen, setIsPayrollFormOpen] = useState(false);
+  const [payrollMonth, setPayrollMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [hourlyRate, setHourlyRate] = useState("");
+  const [baseSalary, setBaseSalary] = useState("");
+  const [bonus, setBonus] = useState("");
+  const [deduction, setDeduction] = useState("");
+  const [payrollError, setPayrollError] = useState<string | null>(null);
+  const [isCreatingPayroll, setIsCreatingPayroll] = useState(false);
 
   const loadAttendanceData = async () => {
     const response = await apiClient.attendance.getAttendance();
@@ -79,10 +101,9 @@ export default function EmployeeManagement() {
       setLoading(true);
       setError(null);
 
-      const [employeeResponse, attendanceResponse, payrollResponse] = await Promise.all([
+      const [employeeResponse, attendanceResponse] = await Promise.all([
         apiClient.employees.getEmployees(),
         apiClient.attendance.getAttendance(),
-        apiClient.payroll.getPayrolls(undefined, new Date().toISOString().slice(0, 7)),
       ]);
 
       if (employeeResponse.success && employeeResponse.data) {
@@ -97,16 +118,48 @@ export default function EmployeeManagement() {
         setAttendanceRecords(list as EmployeeAttendance[]);
       }
 
-      if (payrollResponse.success && payrollResponse.data) {
-        const list = Array.isArray(payrollResponse.data) ? payrollResponse.data : [payrollResponse.data];
-        setPayrollRecords(list as EmployeePayroll[]);
-      }
-
       setLoading(false);
     };
 
     void fetchAll();
   }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    if (!selectedEmployeeId) {
+      return () => {
+        isMounted = false;
+      };
+    }
+
+    const loadPayroll = async () => {
+      const response = await apiClient.payroll.getPayrolls(
+        selectedEmployeeId,
+        new Date().toISOString().slice(0, 7),
+      );
+      if (!isMounted) return;
+
+      if (!response.success) {
+        setError(response.error || "Không thể tải bảng lương.");
+        return;
+      }
+
+      const records = response.data;
+      if (!Array.isArray(records)) {
+        setError("Dữ liệu bảng lương không đúng định dạng API trả về.");
+        return;
+      }
+
+      setPayrollRecords(records);
+    };
+
+    void loadPayroll();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedEmployeeId]);
 
   const filteredEmployees = useMemo(() => {
     return employees.filter((employee) => {
@@ -128,6 +181,63 @@ export default function EmployeeManagement() {
   const selectedEmployee = employees.find((employee) => employee.id === selectedEmployeeId) ?? null;
   const selectedAttendance = attendanceRecords.filter((record) => record.employeeId === selectedEmployeeId);
   const selectedPayroll = payrollRecords.filter((record) => record.employeeId === selectedEmployeeId);
+
+  const handleCreatePayroll = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedEmployeeId) {
+      setPayrollError("Vui lòng chọn nhân viên cần tạo lương.");
+      return;
+    }
+
+    const optionalAmounts = [
+      ["hourlyRate", hourlyRate],
+      ["baseSalary", baseSalary],
+      ["bonus", bonus],
+      ["deduction", deduction],
+    ] as const;
+    const parsedAmounts: Partial<Record<(typeof optionalAmounts)[number][0], number>> = {};
+    for (const [field, value] of optionalAmounts) {
+      if (value === "") continue;
+      const amount = Number(value);
+      if (!Number.isFinite(amount) || amount < 0) {
+        setPayrollError("Các khoản lương phải là số không âm.");
+        return;
+      }
+      parsedAmounts[field] = amount;
+    }
+
+    setIsCreatingPayroll(true);
+    setPayrollError(null);
+    try {
+      const response = await apiClient.payroll.calculate({
+        employeeId: selectedEmployeeId,
+        ...(payrollMonth ? { month: payrollMonth } : {}),
+        ...parsedAmounts,
+      });
+
+      if (!response.success) {
+        setPayrollError(response.error || "Không thể tạo bảng lương.");
+        return;
+      }
+
+      const payrollResponse = await apiClient.payroll.getPayrolls(selectedEmployeeId, payrollMonth);
+      if (!payrollResponse.success || !payrollResponse.data) {
+        setPayrollError(payrollResponse.error || "Đã tạo lương nhưng không thể tải lại bảng lương.");
+        return;
+      }
+
+      setPayrollRecords(payrollResponse.data);
+      setIsPayrollFormOpen(false);
+      setHourlyRate("");
+      setBaseSalary("");
+      setBonus("");
+      setDeduction("");
+    } catch (createError) {
+      setPayrollError(createError instanceof Error ? createError.message : "Đã xảy ra lỗi khi tạo lương.");
+    } finally {
+      setIsCreatingPayroll(false);
+    }
+  };
 
   const handleQuickAttendance = async (employee: Employee) => {
     const response = await apiClient.attendance.checkIn({
@@ -414,18 +524,77 @@ export default function EmployeeManagement() {
           </div>
 
           <div className="overflow-hidden rounded-3xl border border-orange-200/80 bg-gradient-to-br from-[#fffaf3] via-[#fff7ef] to-[#f4f7ff] p-5 shadow-[0_20px_45px_rgba(251,146,60,0.18)] dark:border-orange-500/20 dark:from-[#1f120a] dark:via-[#17120d] dark:to-[#0f172a]">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Bảng lương</h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setPayrollError(null);
+                  setIsPayrollFormOpen((isOpen) => !isOpen);
+                }}
+                className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-orange-700"
+              >
+                {isPayrollFormOpen ? "Đóng" : "Tạo lương"}
+              </button>
+            </div>
+
+            {isPayrollFormOpen && (
+              <form onSubmit={handleCreatePayroll} className="mb-5 space-y-4 rounded-2xl border border-orange-200 bg-white/80 p-4 dark:border-orange-500/20 dark:bg-gray-900/50">
+                <p className="text-sm text-slate-600 dark:text-gray-300">
+                  Tạo bảng lương cho <strong>{selectedEmployee.fullName}</strong>.
+                </p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="text-sm font-medium text-slate-700 dark:text-gray-300">
+                    Tháng
+                    <input
+                      required
+                      type="month"
+                      value={payrollMonth}
+                      onChange={(event) => setPayrollMonth(event.target.value)}
+                      className="mt-1 block h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-900"
+                    />
+                  </label>
+                  {([
+                    ["hourlyRate", "Lương theo giờ", hourlyRate, setHourlyRate],
+                    // ["baseSalary", "Lương cơ bản", baseSalary, setBaseSalary],
+                    ["bonus", "Tiền thưởng", bonus, setBonus],
+                    ["deduction", "Tiền khấu trừ", deduction, setDeduction],
+                  ] as const).map(([field, label, value, setValue]) => (
+                    <label key={field} className="text-sm font-medium text-slate-700 dark:text-gray-300">
+                      {label} <span className="font-normal text-gray-400">(không bắt buộc)</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        value={value}
+                        onChange={(event) => setValue(event.target.value)}
+                        placeholder="0"
+                        className="mt-1 block h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-900"
+                      />
+                    </label>
+                  ))}
+                </div>
+                {payrollError && <p role="alert" className="text-sm text-red-600 dark:text-red-400">{payrollError}</p>}
+                <div className="flex justify-end">
+                  <button
+                    type="submit"
+                    disabled={isCreatingPayroll}
+                    className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isCreatingPayroll ? "Đang tạo..." : "Xác nhận tạo lương"}
+                  </button>
+                </div>
+              </form>
+            )}
+
             {selectedPayroll.length === 0 ? (
               <div className="px-3 py-8 text-center text-sm text-slate-500 dark:text-gray-400">Chưa có dữ liệu lương.</div>
             ) : (() => {
-              const latestPayroll = [...selectedPayroll].sort((a, b) => new Date(b.periodStart).getTime() - new Date(a.periodStart).getTime())[0];
-              const periodDate = latestPayroll ? new Date(`${latestPayroll.periodStart}T00:00:00`) : new Date();
-              const base = latestPayroll?.baseSalary ?? 0;
-              const allowance = latestPayroll?.allowance ?? 0;
-              const deduction = latestPayroll?.deduction ?? 0;
-              const totalSalary = latestPayroll?.totalSalary ?? base + allowance - deduction;
-              const bonus = Math.max(totalSalary - base - allowance + deduction, 0);
-              const totalHours = latestPayroll?.attendanceDays ? latestPayroll.attendanceDays * 8 : 0;
-              const hourlyRate = base > 0 && latestPayroll?.attendanceDays ? base / (latestPayroll.attendanceDays * 8) : 0;
+              const latestPayroll = [...selectedPayroll].sort((a, b) => b.month.localeCompare(a.month))[0];
+              const statusLabel = latestPayroll.status === "PAID" ? "Đã thanh toán" : "Chờ xác nhận";
+              const statusClassName = latestPayroll.status === "PAID"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300"
+                : "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-300";
 
               return (
                 <div>
@@ -435,35 +604,18 @@ export default function EmployeeManagement() {
                       <h3 className="mt-2 text-[1.9rem] font-black leading-tight text-slate-900 dark:text-white">{selectedEmployee.fullName}</h3>
                     </div>
                       <span
-                        className="
-                          inline-flex items-center gap-2
-                          rounded-xl
-                          border border-sky-200
-                          bg-sky-50
-                          px-3.5 py-2
-                          text-sm font-bold
-                          text-sky-700
-                          shadow-sm
-                          dark:border-sky-800
-                          dark:bg-sky-950/50
-                          dark:text-sky-300
-                        "
+                        className="inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3.5 py-2 text-sm font-bold text-sky-700 shadow-sm dark:border-sky-800 dark:bg-sky-950/50 dark:text-sky-300"
                       >
-                        {periodDate.toLocaleDateString("vi-VN", {
-                          month: "2-digit",
-                          year: "numeric",
-                        })}
+                        {formatPayrollMonth(latestPayroll.month)}
                       </span>
                   </div>
 
                   <div className="space-y-2">
                     {[
-                      { label: "Giờ làm", value: `${totalHours} giờ`, tone: "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300" },
-                      { label: "Lương/gờ", value: formatCurrency(hourlyRate), tone: "bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-300" },
-                      { label: "Lương cơ bản", value: formatCurrency(base), tone: "bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-300" },
-                      { label: "Tiền thưởng", value: formatCurrency(bonus), tone: "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300" },
-                      { label: "Phụ cấp", value: formatCurrency(allowance), tone: "bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300" },
-                      { label: "Khấu trừ", value: formatCurrency(deduction), tone: "bg-slate-100 text-slate-700 dark:bg-slate-700/40 dark:text-slate-200" },
+                      { label: "Thời gian làm", value: formatWorkedTime(latestPayroll.totalMinutes), tone: "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300" },
+                      { label: "Lương theo giờ", value: formatCurrency(latestPayroll.hourlyRate), tone: "bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-300" },
+                      { label: "Tiền thưởng", value: formatCurrency(latestPayroll.bonus), tone: "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300" },
+                      { label: "Khấu trừ", value: formatCurrency(latestPayroll.deduction), tone: "bg-slate-100 text-slate-700 dark:bg-slate-700/40 dark:text-slate-200" },
                     ].map((item) => (
                       <div key={item.label} className={`flex items-center justify-between rounded-xl px-3 py-3 ${item.tone}`}>
                         <span className="text-sm font-medium">{item.label}</span>
@@ -502,7 +654,7 @@ export default function EmployeeManagement() {
 
                       <div className="text-right">
                         <p className="text-xl font-extrabold tracking-tight tabular-nums text-emerald-700 dark:text-emerald-400">
-                          {formatCurrency(totalSalary)}
+                          {formatCurrency(latestPayroll.netSalary)}
                         </p>
                       </div>
                     </div>
@@ -510,23 +662,9 @@ export default function EmployeeManagement() {
                   <div className="mt-5 flex items-center justify-between gap-3">
                     <button
                       type="button"
-                      className="
-                        inline-flex items-center gap-2
-                        rounded-full
-                        border border-amber-200
-                        bg-amber-50
-                        px-4 py-2
-                        text-sm font-semibold
-                        text-amber-700
-                        shadow-sm
-                        transition-all duration-200
-                        hover:border-amber-300
-                        hover:bg-amber-100
-                        hover:shadow-md
-                        active:scale-95
-                      "
+                      className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold shadow-sm ${statusClassName}`}
                     >
-                      Chờ xác nhận
+                      {statusLabel}
                     </button>
                   </div>
                 </div>

@@ -17,7 +17,6 @@ export default function Ecommerce() {
 
   useEffect(() => {
     let isMounted = true;
-
     const loadOrders = async () => {
       try {
         const response = await apiClient.orders.getOrders("today");
@@ -41,9 +40,7 @@ export default function Ecommerce() {
         if (isMounted) setIsLoading(false);
       }
     };
-
     void loadOrders();
-
     return () => {
       isMounted = false;
     };
@@ -53,7 +50,7 @@ export default function Ecommerce() {
     <div className="grid grid-cols-12 gap-4 md:gap-6">
       <div className="col-span-12 space-y-6 xl:col-span-7">
         <EcommerceMetrics orders={orders} isLoading={isLoading} error={error} />
-        <MonthlySalesChart />
+        <RecentOrders orders={orders} isLoading={isLoading} error={error} />
       </div>
       <div className="col-span-12 xl:col-span-5">
         <MonthlyTarget orders={orders} isLoading={isLoading} error={error} />
@@ -61,13 +58,11 @@ export default function Ecommerce() {
       <div className="col-span-12">
         <StatisticsChart />
       </div>
-
       <div className="col-span-12 xl:col-span-4">
         <DemographicCard />
       </div>
-
       <div className="col-span-12 xl:col-span-8">
-        <RecentOrders orders={orders} isLoading={isLoading} error={error} />
+        <MonthlySalesChart />
       </div>
     </div>
   );
